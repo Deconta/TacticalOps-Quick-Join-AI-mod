@@ -1,0 +1,33 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="TacticalOpsQuickJoin.Properties" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="to340path" Type="System.String" Scope="User">
+      <Value Profile="(Default)">./TO340/System/TacticalOps.exe</Value>
+    </Setting>
+    <Setting Name="to350path" Type="System.String" Scope="User">
+      <Value Profile="(Default)">./TO350/System/TacticalOps.exe</Value>
+    </Setting>
+    <Setting Name="closeOnJoin" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
+    <Setting Name="masterservers" Type="System.String" Scope="User">
+      <Value Profile="(Default)">master.333networks.com:28900
+master.oldunreal.com:28900
+master.newbiesplayground.net:28900
+master.errorist.eu:28900</Value>
+    </Setting>
+    <Setting Name="to220path" Type="System.String" Scope="User">
+      <Value Profile="(Default)">./TO220/System/TacticalOps.exe</Value>
+    </Setting>
+    <Setting Name="darkMode" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="favoriteServers" Type="System.String" Scope="User">
+      <Value Profile="(Default)"></Value>
+    </Setting>
+    <Setting Name="autoRefreshInterval" Type="System.Int32" Scope="User">
+      <Value Profile="(Default)">0</Value>
+    </Setting>
+  </Settings>
+</SettingsFile>
