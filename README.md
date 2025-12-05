@@ -36,7 +36,7 @@ A modern, fast server browser for Tactical Ops with advanced features and an imp
 
 ### Requirements
 - Windows 10/11
-- .NET 10 Runtime (included in self-contained build)
+- .NET 8 Runtime (included in self-contained build)
 - Tactical Ops installed
 
 ### Download
