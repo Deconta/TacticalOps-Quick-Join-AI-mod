@@ -34,6 +34,7 @@
             this.serverListNameColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.serverListMapColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.serverListPlayersColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.serverListPingColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.serverListVersionColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.playerListView = new System.Windows.Forms.DataGridView();
             this.playerListNameColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -68,6 +69,9 @@
             this.btnJoinServer = new System.Windows.Forms.Button();
             this.splitMainStatusBar = new System.Windows.Forms.SplitContainer();
             this.lblDownloadState = new System.Windows.Forms.Label();
+            this.addToFavoritesToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.refreshServerToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.contextMenuSeparator = new System.Windows.Forms.ToolStripSeparator();
             this.contextMenuStrip = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.copyIPToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.openTO220Dialog = new System.Windows.Forms.OpenFileDialog();
@@ -108,6 +112,7 @@
             this.serverListNameColumn,
             this.serverListMapColumn,
             this.serverListPlayersColumn,
+            this.serverListPingColumn,
             this.serverListVersionColumn});
             dataGridViewCellStyle7.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle7.BackColor = System.Drawing.SystemColors.Window;
@@ -130,7 +135,7 @@
             this.serverListView.TabIndex = 5;
             this.serverListView.CellMouseDown += new System.Windows.Forms.DataGridViewCellMouseEventHandler(this.serverListView_CellMouseDown);
             this.serverListView.SelectionChanged += new System.EventHandler(this.serverListView_SelectionChanged);
-            this.serverListView.SortCompare += new System.Windows.Forms.DataGridViewSortCompareEventHandler(this.serverListView_SortCompare);
+
             // 
             // serverListNameColumn
             // 
@@ -151,6 +156,13 @@
             this.serverListPlayersColumn.HeaderText = "Players";
             this.serverListPlayersColumn.Name = "serverListPlayersColumn";
             this.serverListPlayersColumn.ReadOnly = true;
+            // 
+            // serverListPingColumn
+            // 
+            this.serverListPingColumn.FillWeight = 20F;
+            this.serverListPingColumn.HeaderText = "Ping";
+            this.serverListPingColumn.Name = "serverListPingColumn";
+            this.serverListPingColumn.ReadOnly = true;
             // 
             // serverListVersionColumn
             // 
@@ -530,9 +542,13 @@
             // contextMenuStrip
             // 
             this.contextMenuStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.addToFavoritesToolStripMenuItem,
+            this.refreshServerToolStripMenuItem,
+            this.contextMenuSeparator,
             this.copyIPToolStripMenuItem});
             this.contextMenuStrip.Name = "contextMenuStrip";
-            this.contextMenuStrip.Size = new System.Drawing.Size(187, 26);
+            this.contextMenuStrip.Size = new System.Drawing.Size(187, 76);
+            this.contextMenuStrip.Opening += new System.ComponentModel.CancelEventHandler(this.contextMenuStrip_Opening);
             // 
             // copyIPToolStripMenuItem
             // 
@@ -540,6 +556,25 @@
             this.copyIPToolStripMenuItem.Size = new System.Drawing.Size(186, 22);
             this.copyIPToolStripMenuItem.Text = "Copy Server Location";
             this.copyIPToolStripMenuItem.Click += new System.EventHandler(this.copyIPToolStripMenuItem_Click);
+            // 
+            // addToFavoritesToolStripMenuItem
+            // 
+            this.addToFavoritesToolStripMenuItem.Name = "addToFavoritesToolStripMenuItem";
+            this.addToFavoritesToolStripMenuItem.Size = new System.Drawing.Size(186, 22);
+            this.addToFavoritesToolStripMenuItem.Text = "Zu Favoriten hinzufügen";
+            this.addToFavoritesToolStripMenuItem.Click += new System.EventHandler(this.addToFavoritesToolStripMenuItem_Click);
+            // 
+            // refreshServerToolStripMenuItem
+            // 
+            this.refreshServerToolStripMenuItem.Name = "refreshServerToolStripMenuItem";
+            this.refreshServerToolStripMenuItem.Size = new System.Drawing.Size(186, 22);
+            this.refreshServerToolStripMenuItem.Text = "Diesen Server aktualisieren";
+            this.refreshServerToolStripMenuItem.Click += new System.EventHandler(this.refreshServerToolStripMenuItem_Click);
+            // 
+            // contextMenuSeparator
+            // 
+            this.contextMenuSeparator.Name = "contextMenuSeparator";
+            this.contextMenuSeparator.Size = new System.Drawing.Size(183, 6);
             // 
             // openTO220Dialog
             // 
@@ -656,6 +691,7 @@
         private System.Windows.Forms.DataGridViewTextBoxColumn serverListNameColumn;
         private System.Windows.Forms.DataGridViewTextBoxColumn serverListMapColumn;
         private System.Windows.Forms.DataGridViewTextBoxColumn serverListPlayersColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn serverListPingColumn;
         private System.Windows.Forms.DataGridViewTextBoxColumn serverListVersionColumn;
         private System.Windows.Forms.ToolStripMenuItem masterserversToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem setTacticalOps22PathToolStripMenuItem;
@@ -664,6 +700,9 @@
         private System.Windows.Forms.ToolStripMenuItem toggleThemeToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem refreshServersToolStripMenuItem;
         private System.Windows.Forms.Button btnRefresh;
+        private System.Windows.Forms.ToolStripMenuItem addToFavoritesToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem refreshServerToolStripMenuItem;
+        private System.Windows.Forms.ToolStripSeparator contextMenuSeparator;
     }
 }
 

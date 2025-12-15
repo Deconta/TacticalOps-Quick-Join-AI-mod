@@ -58,9 +58,19 @@ public sealed class ThemeManager : IDisposable
             grid.ColumnHeadersDefaultCellStyle.BackColor = UIConstants.DarkTheme.HeaderBackground;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = UIConstants.DarkTheme.Foreground;
             grid.ColumnHeadersDefaultCellStyle.Font = headerFont;
-            grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            // grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Removed global alignment
             grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = UIConstants.DarkTheme.HeaderBackground;
             grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = UIConstants.DarkTheme.Foreground;
+            
+            // Explicitly set header alignment for each column
+            foreach (DataGridViewColumn column in grid.Columns)
+            {
+                if (column.HeaderCell.Style == null)
+                {
+                    column.HeaderCell.Style = new DataGridViewCellStyle();
+                }
+                column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            }
             
             grid.DefaultCellStyle.BackColor = UIConstants.DarkTheme.Background;
             grid.DefaultCellStyle.ForeColor = UIConstants.DarkTheme.Foreground;
@@ -79,9 +89,19 @@ public sealed class ThemeManager : IDisposable
             grid.ColumnHeadersDefaultCellStyle.BackColor = SystemColors.Control;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
             grid.ColumnHeadersDefaultCellStyle.Font = headerFont;
-            grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            // grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Removed global alignment
             grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = SystemColors.Control;
             grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = SystemColors.ControlText;
+
+            // Explicitly set header alignment for each column
+            foreach (DataGridViewColumn column in grid.Columns)
+            {
+                if (column.HeaderCell.Style == null)
+                {
+                    column.HeaderCell.Style = new DataGridViewCellStyle();
+                }
+                column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            }
             
             grid.DefaultCellStyle.BackColor = SystemColors.Window;
             grid.DefaultCellStyle.ForeColor = SystemColors.WindowText;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -8,15 +8,15 @@ namespace TacticalOpsQuickJoin {
         public string ServerIP { get; private set; }
         public int ServerPort { get; private set; }
         public string ServerName { get; private set; }
-        
+
         public int Ping { get; set; } = 999;
-        
+
         public int NumPlayers { get; private set; } = 0;
         public int MaxPlayers { get; private set; } = 0;
-        
+
         // NEU: Bot Count
         public int BotCount { get; private set; } = 0;
-        
+
         public bool IsTO220 { get; private set; }
         public bool IsTO340 { get; private set; }
         public bool IsTO350 { get; private set; }
@@ -79,13 +79,25 @@ namespace TacticalOpsQuickJoin {
                 IsTO340 = (gameType == "TO340");
                 IsTO350 = (gameType == "TO350");
             }
-            
+
             if (serverInfo.TryGetValue("hostname", out string hostname)) ServerName = hostname;
 
-            if (Ping == 999 && serverInfo.TryGetValue("ping", out string pVal) && int.TryParse(pVal, out int p)) 
+            if (Ping == 999 && serverInfo.TryGetValue("ping", out string pVal) && int.TryParse(pVal, out int p))
                 Ping = p;
 
-            if (serverInfo.TryGetValue("numplayers", out string npVal) && int.TryParse(npVal, out int np)) NumPlayers = np;
+            // Calculate actual number of players from player data
+            int actualPlayerCount = CountActualPlayers();
+
+            // Use the actual player count if available from server, otherwise use calculated count
+            if (serverInfo.TryGetValue("numplayers", out string npVal) && int.TryParse(npVal, out int np)) {
+                // Use the maximum of server-reported count and actual count to handle cases where
+                // the server doesn't report all players in the response but player data exists
+                NumPlayers = Math.Max(np, actualPlayerCount);
+            } else {
+                // If server doesn't provide numplayers, use actual count from data
+                NumPlayers = actualPlayerCount;
+            }
+
             if (serverInfo.TryGetValue("maxplayers", out string mpVal) && int.TryParse(mpVal, out int mp)) MaxPlayers = mp;
 
             // --- BOT DETECTION ---
@@ -107,11 +119,25 @@ namespace TacticalOpsQuickJoin {
                     {
                         if (p == 0) bots++;
                     }
-                    // Fallback: Wenn kein Ping gesendet wurde, aber Spieler existiert, könnte es auch 0 sein, 
+                    // Fallback: Wenn kein Ping gesendet wurde, aber Spieler existiert, könnte es auch 0 sein,
                     // aber wir zählen sicherheitshalber nur explizite Nullen.
                 }
             }
             BotCount = bots;
+        }
+
+        private int CountActualPlayers()
+        {
+            int actualPlayers = 0;
+            // Count players from player_0 to player_63
+            for (int i = 0; i < 64; i++)
+            {
+                if (serverInfo.ContainsKey("player_" + i))
+                {
+                    actualPlayers++;
+                }
+            }
+            return actualPlayers;
         }
 
         private bool ParseData(string data)
@@ -160,7 +186,9 @@ namespace TacticalOpsQuickJoin {
             foreach (string key in keysToRemove) {
                 serverInfo.Remove(key);
             }
+            // Reset counts since player data is cleared
             BotCount = 0;
+            NumPlayers = 0;
         }
     }
 }

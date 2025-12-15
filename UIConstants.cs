@@ -10,6 +10,7 @@ public static class UIConstants
     public const int MAP_COLUMN_INDEX = 2;
     public const int PLAYERS_COLUMN_INDEX = 3;
     public const int PING_COLUMN_INDEX = 4;
+    public const int VERSION_COLUMN_INDEX = 5;
     
     // Colors - Dark Theme
     public static class DarkTheme
@@ -66,7 +67,7 @@ public static class UIConstants
         public static Font RegularFont => new("Segoe UI", 9, FontStyle.Regular);
         public static Font ButtonFont => new("Segoe UI", 11, FontStyle.Bold);
         public static Font MonospaceFont => new("Consolas", 10, FontStyle.Regular);
-        public static Font StarFont => new("Segoe UI", 12, FontStyle.Regular);
+        public static Font StarFont => new("Segoe UI", 18, FontStyle.Regular);
     }
     
     // UI Dimensions
