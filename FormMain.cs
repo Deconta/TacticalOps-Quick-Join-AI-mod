@@ -605,6 +605,7 @@ namespace TacticalOpsQuickJoin
                     sw.Stop();
                     var result = await receiveTask;
                     serverData.Ping = Math.Max(1, (int)sw.ElapsedMilliseconds);
+                    Debug.WriteLine($"Ping for {ipStr}: {serverData.Ping}ms"); // Log calculated ping
                     serverData.SetInfo(Encoding.UTF8.GetString(result.Buffer));
 
                     if (serverData.IsTO220 || serverData.IsTO340 || serverData.IsTO350)
@@ -757,7 +758,13 @@ namespace TacticalOpsQuickJoin
 
         private void LaunchGame(string version, string args = "")
         {
-            string propName = $"to{version.Replace(".", "")}path";
+            string propName = version switch
+            {
+                "2.2" => "to220path",
+                "3.4" => "to340path",
+                "3.5" => "to350path",
+                _ => throw new ArgumentOutOfRangeException(nameof(version), $"Unknown game version: {version}")
+            };
             string? path = Settings.Default[propName] as string;
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
             {
@@ -770,7 +777,19 @@ namespace TacticalOpsQuickJoin
                     Settings.Default.Save();
                 } else return;
             }
-            try { Process.Start(path!, args); }
+
+            // Get the executable name from the path to check for running processes
+            string executableName = Path.GetFileNameWithoutExtension(path);
+
+            // Check if an instance of the game is already running
+            Process[] runningProcesses = Process.GetProcessesByName(executableName);
+            if (runningProcesses.Length > 0)
+            {
+                MessageBox.Show($"'{executableName}' läuft bereits. Es kann keine zweite Instanz gestartet werden.", "Spiel läuft bereits", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try { Process.Start(path, args); }
             catch(Exception ex) { MessageBox.Show("Could not start game: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
         
