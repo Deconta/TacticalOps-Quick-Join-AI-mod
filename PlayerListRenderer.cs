@@ -9,25 +9,15 @@ public static class PlayerListRenderer
 
         playerListView.Rows.Clear();
 
-        for (int i = 0; i < UIConstants.MAX_PLAYERS; i++)
+        foreach (var player in serverData.Players)
         {
-            string playerName = serverData.GetProperty($"player_{i}");
-            if (string.IsNullOrEmpty(playerName)) continue;
-
-            if (!int.TryParse(serverData.GetProperty($"score_{i}"), out int score)) score = 0;
-            if (!int.TryParse(serverData.GetProperty($"frags_{i}"), out int kills)) kills = 0;
-            if (!int.TryParse(serverData.GetProperty($"deaths_{i}"), out int deaths)) deaths = 0;
-            if (!int.TryParse(serverData.GetProperty($"ping_{i}"), out int ping)) ping = 0;
-            if (!int.TryParse(serverData.GetProperty($"team_{i}"), out int team)) team = 255;
-
-            bool isBot = ping == 0;
-            
-            string displayName = FormatPlayerName(playerName, isBot);
+            bool isBot = player.Ping == 0;
+            string displayName = FormatPlayerName(player.Name, isBot);
             
             var row = new DataGridViewRow();
-            row.CreateCells(playerListView, displayName, score, kills, deaths, ping, team);
+            row.CreateCells(playerListView, displayName, player.Score, player.Kills, player.Deaths, player.Ping, player.Team);
             
-            ApplyPlayerRowStyle(row, team, isBot);
+            ApplyPlayerRowStyle(row, player.Team, isBot);
             
             playerListView.Rows.Add(row);
         }

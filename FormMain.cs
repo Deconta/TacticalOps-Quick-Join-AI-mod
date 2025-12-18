@@ -15,7 +15,6 @@ using System.Reflection;
 using System.Net.Http;
 using System.Text.Json;
 using System.Runtime.InteropServices;
-using TacticalOpsQuickJoin.Properties;
 
 namespace TacticalOpsQuickJoin
 {
@@ -23,10 +22,8 @@ namespace TacticalOpsQuickJoin
     {
         private readonly HttpClient _httpClient = new();
 
-        public List<MasterServer.MasterServerInfo> masterServers = [];
         private List<ServerData> servers = [];
         private readonly Dictionary<int, ServerData> _serverLookup = new();
-        private readonly SemaphoreSlim _pingSemaphore = new(Constants.MAX_CONCURRENT_PINGS);
         private List<MapData> _mapList = [];
         private readonly Dictionary<string, MapData> _mapLookup = new();
         private Form? _mapPreviewWindow;
@@ -43,11 +40,14 @@ namespace TacticalOpsQuickJoin
         private bool _isScrolling;
         private System.Windows.Forms.Timer? _scrollTimer;
         private DataGridViewColumn? _sortedColumn;
+        private readonly ISettingsService _settingsService;
+        private readonly IServerProvider _serverProvider;
         private ListSortDirection _sortDirection = ListSortDirection.Descending;
 
         public FormMain()
         {
-
+            _settingsService = new SettingsService();
+            _serverProvider = new ServerProvider(_settingsService);
             InitializeComponent();
 
             this.MinimizeBox = true;
@@ -92,7 +92,7 @@ namespace TacticalOpsQuickJoin
 
             _starFont = UIConstants.Fonts.StarFont;
 
-            _themeManager = new ThemeManager(this, Settings.Default.darkMode);
+            _themeManager = new ThemeManager(this, _settingsService.DarkMode);
             if (Controls.Find("menuStrip1", true).FirstOrDefault() is MenuStrip menuStrip)
             {
                 _themeManager.ApplyToMenuStrip(menuStrip);
@@ -131,8 +131,7 @@ namespace TacticalOpsQuickJoin
             playerListPingColumn.ValueType = typeof(Int32);
             playerListTeamColumn.ValueType = typeof(Int32);
 
-            closeOnJoinToolStripMenuItem.Checked = Settings.Default.closeOnJoin;
-            LoadMasterServersFromSettings();
+            closeOnJoinToolStripMenuItem.Checked = _settingsService.CloseOnJoin;
             ConfigureStatusLabels();
         }
 
@@ -184,12 +183,27 @@ namespace TacticalOpsQuickJoin
 
         private async Task LoadMapDataAsync()
         {
-            string localJsonPath = Path.Combine(Application.StartupPath, "maps.json");
+            string appDataFolder = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string appSpecificFolder = Path.Combine(appDataFolder, "TacticalOpsQuickJoin");
+            if (!Directory.Exists(appSpecificFolder))
+            {
+                Directory.CreateDirectory(appSpecificFolder);
+            }
+            string localJsonPath = Path.Combine(appSpecificFolder, "maps.json");
+
             try
             {
-                string jsonString = File.Exists(localJsonPath)
-                    ? await File.ReadAllTextAsync(localJsonPath)
-                    : await _httpClient.GetStringAsync(Constants.MAP_JSON_URL);
+                string jsonString;
+                if (File.Exists(localJsonPath))
+                {
+                    jsonString = await File.ReadAllTextAsync(localJsonPath);
+                }
+                else
+                {
+                    jsonString = await _httpClient.GetStringAsync(Constants.MAP_JSON_URL);
+                    await File.WriteAllTextAsync(localJsonPath, jsonString);
+                }
+                
                 _mapList = JsonSerializer.Deserialize<List<MapData>>(jsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
                 BuildMapLookup();
             }
@@ -443,7 +457,7 @@ namespace TacticalOpsQuickJoin
         {
             try
             {
-                var favorites = (Settings.Default.favoriteServers ?? "").Split(',');
+                var favorites = (_settingsService.FavoriteServers ?? "").Split(',');
                 foreach (var fav in favorites.Where(f => !string.IsNullOrWhiteSpace(f)))
                     _favoriteServers.Add(fav.Trim());
             }
@@ -454,8 +468,8 @@ namespace TacticalOpsQuickJoin
         {
             try
             {
-                Settings.Default.favoriteServers = string.Join(",", _favoriteServers);
-                Settings.Default.Save();
+                _settingsService.FavoriteServers = string.Join(",", _favoriteServers);
+                _settingsService.Save();
             }
             catch { }
         }
@@ -544,18 +558,6 @@ namespace TacticalOpsQuickJoin
             }
         }
 
-        private void EnableDoubleBuffering(Control control) => typeof(Control).InvokeMember("DoubleBuffered", BindingFlags.SetProperty | BindingFlags.Instance | BindingFlags.NonPublic, null, control, new object[] { true });
-
-        private void LoadMasterServersFromSettings()
-        {
-            if (string.IsNullOrWhiteSpace(Settings.Default.masterservers)) return;
-            foreach (var line in Settings.Default.masterservers.Split('\n'))
-            {
-                var parts = line.Split(':');
-                if (parts.Length == 2) masterServers.Add(new MasterServer.MasterServerInfo { Address = parts[0], Port = Convert.ToInt16(parts[1]) });
-            }
-        }
-
         private async void Form1_Load(object sender, EventArgs e) => await RefreshServerListAsync();
         private async void btnRefresh_Click(object sender, EventArgs e) => await RefreshServerListAsync();
 
@@ -569,67 +571,23 @@ namespace TacticalOpsQuickJoin
                 serverListView.Rows.Clear();
                 servers.Clear();
                 _serverLookup.Clear();
-                var allIPs = new HashSet<string>();
-                var downloadTasks = masterServers.Select(ms => MasterServer.DownloadServerListAsync(ms));
-                var responses = await Task.WhenAll(downloadTasks);
-                foreach (var ip in responses.Where(r => r.errorCode == 0 && r.serverList != null).SelectMany(r => r.serverList!)) allIPs.Add(ip);
-                lblDownloadState.Text = $"{allIPs.Count} servers found. Querying details...";
-                var pingTasks = allIPs.Select((ip, index) => QueryServerInfoAndAddToList(index, ip));
-                await Task.WhenAll(pingTasks);
-                // The final sort is now handled by the timer.
+                
+                await _serverProvider.GetServerListAsync(server =>
+                {
+                    Invoke(new Action(() => AddServer(server)));
+                });
+                
                 lblDownloadState.Text = $"Done. {serverListView.Rows.Count} servers online.";
                 if (serverListView.Rows.Count > 0) Invoke(() => { serverListView.Rows[0].Selected = true; serverListView_SelectionChanged(serverListView, EventArgs.Empty); });
             }
             finally { _isRefreshing = false; }
         }
 
-        private async Task QueryServerInfoAndAddToList(int id, string ipStr)
+        private void AddServer(ServerData serverData)
         {
-            if (!ValidationHelper.IsValidServerAddress(ipStr)) return;
-            await _pingSemaphore.WaitAsync();
-            try
-            {
-                var parts = ipStr.Split(':');
-                var serverData = new ServerData(id, ipStr);
-                using var udp = new UdpClient();
-                udp.Connect(parts[0], int.Parse(parts[1]));
-
-                var data = Encoding.UTF8.GetBytes(@"\info\");
-                
-                var sw = Stopwatch.StartNew();
-                await udp.SendAsync(data, data.Length);
-                var receiveTask = udp.ReceiveAsync();
-                
-                if (await Task.WhenAny(receiveTask, Task.Delay(Constants.DEFAULT_UDP_TIMEOUT)) == receiveTask)
-                {
-                    sw.Stop();
-                    var result = await receiveTask;
-                    serverData.Ping = Math.Max(1, (int)sw.ElapsedMilliseconds);
-                    Debug.WriteLine($"Ping for {ipStr}: {serverData.Ping}ms"); // Log calculated ping
-                    serverData.SetInfo(Encoding.UTF8.GetString(result.Buffer));
-
-                    if (serverData.IsTO220 || serverData.IsTO340 || serverData.IsTO350)
-                    {
-                        Invoke(() => {
-                            servers.Add(serverData);
-                            _serverLookup[serverData.Id] = serverData;
-                            AddServerToGrid(serverData);
-                                                    _needsSort = true;
-                                                    if (_sortTimer != null && !_sortTimer.Enabled)
-                                                    {
-                                                        _sortTimer.Start();
-                                                    }                        });
-                    }
-                }
-            }
-            catch (Exception ex) 
-            {
-                Debug.WriteLine($"Error querying server {ipStr}: {ex.Message}");
-            } 
-            finally 
-            { 
-                _pingSemaphore.Release(); 
-            } 
+            servers.Add(serverData);
+            _serverLookup[serverData.Id] = serverData;
+            AddServerToGrid(serverData);
         }
 
         private void AddServerToGrid(ServerData serverData)
@@ -637,20 +595,25 @@ namespace TacticalOpsQuickJoin
             var newRow = new DataGridViewRow();
             newRow.CreateCells(serverListView,
                 _favoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆",
-                serverData.GetProperty("password") == "True" ? $"🔒 {serverData.ServerName}" : serverData.ServerName,
-                serverData.GetProperty("maptitle"),
+                serverData.Password ? $"🔒 {serverData.ServerName}" : serverData.ServerName,
+                serverData.MapTitle,
                 serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}",
-                serverData.Ping, serverData.GetProperty("gametype"));
+                serverData.Ping, serverData.GameType);
             newRow.Tag = serverData.Id;
             bool isFavorite = _favoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}");
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.ForeColor = isFavorite ? Color.Yellow : Color.Gray;
-            newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray; // Keep color on select
+            newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray; 
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Font = _starFont;
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             var pingColor = PlayerListRenderer.GetPingColor(serverData.Ping);
             newRow.Cells[UIConstants.PING_COLUMN_INDEX].Style.BackColor = pingColor;
             newRow.Cells[UIConstants.PING_COLUMN_INDEX].Style.SelectionBackColor = pingColor;
             serverListView.Rows.Add(newRow);
+            _needsSort = true;
+            if (_sortTimer != null && !_sortTimer.Enabled)
+            {
+                _sortTimer.Start();
+            }
         }
 
         private async void serverListView_SelectionChanged(object sender, EventArgs e)
@@ -667,54 +630,29 @@ namespace TacticalOpsQuickJoin
                 if (serverListView.SelectedRows[0].Tag is int index && _serverLookup.TryGetValue(index, out var server))
                 {
                     server.ClearPlayerList();
-                    await GetServerDetailsAsync(server);
+                    await _serverProvider.GetServerDetailsAsync(server);
+                    UpdateStatusInfoUI(server);
+                    UpdateServerListRow(server);
                 }
             }
             catch (Exception ex) { Debug.WriteLine($"Error loading details: {ex.Message}"); lblNoResponse.Show(); lblWaitingForResponse.Hide(); }
+            finally { lblWaitingForResponse.Hide(); }
         }
-
-        private async Task GetServerDetailsAsync(ServerData serverData)
-        {
-            try
-            {
-                using var udp = new UdpClient();
-                udp.Connect(serverData.ServerIP, serverData.ServerPort);
-                
-                var dataStatus = Encoding.UTF8.GetBytes(@"\status\");
-                await udp.SendAsync(dataStatus, dataStatus.Length);
-                var receiveTask = udp.ReceiveAsync();
-                if (await Task.WhenAny(receiveTask, Task.Delay(2000)) != receiveTask)
-                    throw new SocketException((int)SocketError.TimedOut);
-                
-                var result = await receiveTask;
-                serverData.UpdateInfo(Encoding.UTF8.GetString(result.Buffer));
-
-                var dataPlayers = Encoding.UTF8.GetBytes(@"\players\");
-                await udp.SendAsync(dataPlayers, dataPlayers.Length);
-                receiveTask = udp.ReceiveAsync();
-                if (await Task.WhenAny(receiveTask, Task.Delay(2000)) == receiveTask)
-                {
-                     var playerResult = await receiveTask;
-                     serverData.UpdateInfo(Encoding.UTF8.GetString(playerResult.Buffer));
-                }
         
-                UpdateStatusInfoUI(serverData);
-                UpdateServerListRow(serverData);
-            }
-            catch(Exception ex) 
-            { 
-                Debug.WriteLine($"Error getting details for {serverData.ServerIP}:{serverData.ServerPort}: {ex.Message}");
-                lblNoResponse.Show(); 
-            }
-            finally 
-            { 
-                lblWaitingForResponse.Hide(); 
-            }
-        }
-
         private void UpdateStatusInfoUI(ServerData serverData)
         {
-            var settings = new Dictionary<string, string> { ["Admin Name"] = "adminname", ["Admin Email"] = "adminemail", ["TOST Version"] = "tostversion", ["ESE Version"] = "protection", ["ESE Mode"] = "esemode", ["Password"] = "password", ["Time Limit"] = "timelimit", ["Min Players"] = "minplayers", ["Friendly Fire"] = "friendlyfire", ["Explosion FF"] = "explositionff" };
+            var settings = new Dictionary<string, string> { 
+                ["Admin Name"] = serverData.AdminName, 
+                ["Admin Email"] = serverData.AdminEmail, 
+                ["TOST Version"] = serverData.TostVersion, 
+                ["ESE Version"] = serverData.Protection, 
+                ["ESE Mode"] = serverData.EseMode, 
+                ["Password"] = serverData.Password.ToString(), 
+                ["Time Limit"] = serverData.TimeLimit, 
+                ["Min Players"] = serverData.MinPlayers, 
+                ["Friendly Fire"] = serverData.FriendlyFire, 
+                ["Explosion FF"] = serverData.ExplosionFF
+            };
             if (serverSettingsView.Parent is not Control settingsContainer) return;
             var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(5, 5, 5, btnJoinServer.Height + 5), BackColor = _themeManager?.GetPanelBackColor() ?? SystemColors.Control };
             settingsContainer.Controls.Add(panel);
@@ -724,9 +662,9 @@ namespace TacticalOpsQuickJoin
             var labelColor = _themeManager?.GetPanelForeColor() ?? SystemColors.ControlText;
             panel.Controls.Add(new Label { Text = "SERVER SETTINGS:", Font = headerFont, ForeColor = labelColor, Padding = new Padding(0, 0, 0, 8), AutoSize = true });
             foreach (var (key, value) in settings)
-                panel.Controls.Add(new Label { Text = $"{key.PadRight(18)}: {serverData.GetProperty(value)}", AutoSize = true, ForeColor = labelColor, Font = monoFont });
+                panel.Controls.Add(new Label { Text = $"{key.PadRight(18)}: {value}", AutoSize = true, ForeColor = labelColor, Font = monoFont });
             
-            if (serverData.NumPlayers == 0) lblNoPlayers.Show();
+            if (serverData.Players.Count == 0) lblNoPlayers.Show();
             else
             {
                 lblNoPlayers.Hide();
@@ -740,7 +678,7 @@ namespace TacticalOpsQuickJoin
         {
             var row = serverListView.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag is int id && id == serverData.Id);
             if (row == null) return;
-            row.Cells[UIConstants.MAP_COLUMN_INDEX].Value = serverData.GetProperty("maptitle");
+            row.Cells[UIConstants.MAP_COLUMN_INDEX].Value = serverData.MapTitle;
             row.Cells[UIConstants.PLAYERS_COLUMN_INDEX].Value = serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}";
             row.Cells[UIConstants.PING_COLUMN_INDEX].Value = serverData.Ping;
         }
@@ -751,54 +689,17 @@ namespace TacticalOpsQuickJoin
             string version = server.IsTO340 ? "3.4" : server.IsTO350 ? "3.5" : server.IsTO220 ? "2.2" : "";
             if (!string.IsNullOrEmpty(version))
             {
-                LaunchGame(version, $"{server.ServerIP}:{server.GetProperty("hostport")}");
-                if (Settings.Default.closeOnJoin) Close();
+                GameLauncher.LaunchGame(version, _settingsService, $"{server.ServerIP}:{server.HostPort}");
+                if (_settingsService.CloseOnJoin) Close();
             }
-        }
-
-        private void LaunchGame(string version, string args = "")
-        {
-            string propName = version switch
-            {
-                "2.2" => "to220path",
-                "3.4" => "to340path",
-                "3.5" => "to350path",
-                _ => throw new ArgumentOutOfRangeException(nameof(version), $"Unknown game version: {version}")
-            };
-            string? path = Settings.Default[propName] as string;
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            {
-                if (MessageBox.Show($"TO {version} not found. Locate it?", $"Locate TO {version}", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                {
-                    using var ofd = new OpenFileDialog { Title = $"Select TO {version}", Filter = "TO Executable|*.exe|All Files|*.*" };
-                    if (ofd.ShowDialog() != DialogResult.OK) return;
-                    path = ofd.FileName;
-                    Settings.Default[propName] = path;
-                    Settings.Default.Save();
-                } else return;
-            }
-
-            // Get the executable name from the path to check for running processes
-            string executableName = Path.GetFileNameWithoutExtension(path);
-
-            // Check if an instance of the game is already running
-            Process[] runningProcesses = Process.GetProcessesByName(executableName);
-            if (runningProcesses.Length > 0)
-            {
-                MessageBox.Show($"'{executableName}' läuft bereits. Es kann keine zweite Instanz gestartet werden.", "Spiel läuft bereits", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            try { Process.Start(path, args); }
-            catch(Exception ex) { MessageBox.Show("Could not start game: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
         
         private void setTacticalOps22PathToolStripMenuItem_Click(object sender, EventArgs e)
         {
             if (openTO220Dialog.ShowDialog() == DialogResult.OK)
             {
-                Settings.Default.to220path = openTO220Dialog.FileName;
-                Settings.Default.Save();
+                _settingsService.SetGamePath("2.2", openTO220Dialog.FileName!);
+                _settingsService.Save();
             }
         }
 
@@ -806,8 +707,8 @@ namespace TacticalOpsQuickJoin
         {
             if (openTO340Dialog.ShowDialog() == DialogResult.OK)
             {
-                Settings.Default.to340path = openTO340Dialog.FileName;
-                Settings.Default.Save();
+                _settingsService.SetGamePath("3.4", openTO340Dialog.FileName!);
+                _settingsService.Save();
             }
         }
 
@@ -815,16 +716,16 @@ namespace TacticalOpsQuickJoin
         {
             if (openTO350Dialog.ShowDialog() == DialogResult.OK)
             {
-                Settings.Default.to350path = openTO350Dialog.FileName;
-                Settings.Default.Save();
+                _settingsService.SetGamePath("3.5", openTO350Dialog.FileName!);
+                _settingsService.Save();
             }
         }
 
         private async void masterserversToolStripMenuItem_Click(object sender, EventArgs e) { using (var f = new FormMasterServers()) f.ShowDialog(this); await RefreshServerListAsync(); }
-        private void launchTacticalOps22ToolStripMenuItem_Click(object sender, EventArgs e) => LaunchGame("2.2");
-        private void launchTacticalOps34ToolStripMenuItem_Click(object sender, EventArgs e) => LaunchGame("3.4");
-        private void launchTacticalOps35ToolStripMenuItem_Click(object sender, EventArgs e) => LaunchGame("3.5");
-        private void closeOnJoinToolStripMenuItem_Click(object sender, EventArgs e) { Settings.Default.closeOnJoin = !Settings.Default.closeOnJoin; Settings.Default.Save(); }
+        private void launchTacticalOps22ToolStripMenuItem_Click(object sender, EventArgs e) => GameLauncher.LaunchGame("2.2", _settingsService);
+        private void launchTacticalOps34ToolStripMenuItem_Click(object sender, EventArgs e) => GameLauncher.LaunchGame("3.4", _settingsService);
+        private void launchTacticalOps35ToolStripMenuItem_Click(object sender, EventArgs e) => GameLauncher.LaunchGame("3.5", _settingsService);
+        private void closeOnJoinToolStripMenuItem_Click(object sender, EventArgs e) { _settingsService.CloseOnJoin = !_settingsService.CloseOnJoin; _settingsService.Save(); }
         private void aboutToolStripMenuItem_Click(object sender, EventArgs e) { using(var dlg = new FormAbout()) dlg.ShowDialog(this); }
         private void exitToolStripMenuItem_Click(object sender, EventArgs e) => Close();
 
@@ -855,7 +756,7 @@ namespace TacticalOpsQuickJoin
         private void copyIPToolStripMenuItem_Click(object? sender, EventArgs e)
         {
             if (serverListView.CurrentRow?.Tag is int index && _serverLookup.TryGetValue(index, out var server))
-                Clipboard.SetText($"unreal://{server.ServerIP}:{server.GetProperty("hostport")}");
+                Clipboard.SetText($"unreal://{server.ServerIP}:{server.HostPort}");
         }
 
         private void serverListView_ColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
@@ -876,7 +777,6 @@ namespace TacticalOpsQuickJoin
             _scrollTimer?.Dispose();
             CloseMapPreview();
             foreach (var img in _imageCache.Values) img?.Dispose();
-            _pingSemaphore?.Dispose();
             _themeManager?.Dispose();
             _starFont?.Dispose();
             _httpClient?.Dispose();
@@ -884,7 +784,7 @@ namespace TacticalOpsQuickJoin
 
         private void InitializeAutoRefresh()
         {
-            int interval = Settings.Default.autoRefreshInterval;
+            int interval = _settingsService.AutoRefreshInterval;
             if (interval > 0 && ValidationHelper.IsValidRefreshInterval(interval))
             {
                 _autoRefreshTimer = new System.Windows.Forms.Timer { Interval = interval * 1000 };
@@ -893,7 +793,7 @@ namespace TacticalOpsQuickJoin
             }
         }
 
-        private void serverListView_CellDoubleClick(object? sender, DataGridViewCellEventArgs e) { if (e.RowIndex >= 0) btnJoinServer_Click(this, e); }
+        private void serverListView_CellDoubleClick(object sender, DataGridViewCellEventArgs e) { if (e.RowIndex >= 0) btnJoinServer_Click(this, e); }
         private async void serverListView_CellClick(object? sender, DataGridViewCellEventArgs e) { if (e.RowIndex >= 0) { await Task.Delay(50); serverListView_SelectionChanged(serverListView, EventArgs.Empty); } }
         private void toggleThemeToolStripMenuItem_Click(object? sender, EventArgs e)
         {
@@ -903,8 +803,8 @@ namespace TacticalOpsQuickJoin
             ApplyThemeToControls();
             ConfigureStatusLabels();
             UpdateExistingServerSettings();
-            Settings.Default.darkMode = _themeManager.IsDarkMode;
-            Settings.Default.Save();
+            _settingsService.DarkMode = _themeManager.IsDarkMode;
+            _settingsService.Save();
         }
 
         private void UpdateExistingServerSettings()
@@ -917,6 +817,8 @@ namespace TacticalOpsQuickJoin
                 foreach (Label label in panel.Controls.OfType<Label>()) label.ForeColor = _themeManager.GetPanelForeColor();
             }
         }
+
+        private void EnableDoubleBuffering(Control control) => typeof(Control).InvokeMember("DoubleBuffered", System.Reflection.BindingFlags.SetProperty | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, control, new object[] { true });
 
         private async void refreshServersToolStripMenuItem_Click(object? sender, EventArgs e) => await RefreshServerListAsync();
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
@@ -947,7 +849,12 @@ namespace TacticalOpsQuickJoin
 
         private async Task RefreshSingleServerAsync(ServerData serverData)
         {
-            try { await GetServerDetailsAsync(serverData); }
+            try 
+            { 
+                await _serverProvider.GetServerDetailsAsync(serverData);
+                UpdateStatusInfoUI(serverData);
+                UpdateServerListRow(serverData);
+            }
             catch (Exception ex) { Debug.WriteLine($"Error refreshing single server: {ex.Message}"); }
         }
 

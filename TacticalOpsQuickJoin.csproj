@@ -16,12 +16,6 @@
 </PropertyGroup>
 
 <ItemGroup>
-    <None Update="maps.json">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-</ItemGroup>
-
-<ItemGroup>
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.0" />
 </ItemGroup>
 

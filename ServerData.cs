@@ -7,19 +7,30 @@ namespace TacticalOpsQuickJoin {
         public int Id { get; private set; }
         public string ServerIP { get; private set; }
         public int ServerPort { get; private set; }
-        public string ServerName { get; private set; }
-
+        public string ServerName { get; set; } = string.Empty;
         public int Ping { get; set; } = 999;
-
         public int NumPlayers { get; private set; } = 0;
         public int MaxPlayers { get; private set; } = 0;
-
-        // NEU: Bot Count
         public int BotCount { get; private set; } = 0;
-
         public bool IsTO220 { get; private set; }
         public bool IsTO340 { get; private set; }
         public bool IsTO350 { get; private set; }
+
+        public string MapTitle { get; set; } = string.Empty;
+        public bool Password { get; set; }
+        public string GameType { get; set; } = string.Empty;
+        public string HostPort { get; set; } = string.Empty;
+        public string AdminName { get; set; } = string.Empty;
+        public string AdminEmail { get; set; } = string.Empty;
+        public string TostVersion { get; set; } = string.Empty;
+        public string Protection { get; set; } = string.Empty;
+        public string EseMode { get; set; } = string.Empty;
+        public string TimeLimit { get; set; } = string.Empty;
+        public string MinPlayers { get; set; } = string.Empty;
+        public string FriendlyFire { get; set; } = string.Empty;
+        public string ExplosionFF { get; set; } = string.Empty;
+
+        public List<Player> Players { get; private set; } = new List<Player>();
 
         private Dictionary<string, string> serverInfo;
 
@@ -30,34 +41,6 @@ namespace TacticalOpsQuickJoin {
             ServerPort = parts.Length > 1 && int.TryParse(parts[1], out int p) ? p : 7777;
 
             serverInfo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-
-        public string GetProperty(string name) {
-            if (serverInfo.TryGetValue(name, out string value))
-            {
-                return value;
-            }
-            return GetDefaultValueForKey(name);
-        }
-
-        public string GetDefaultValueForKey(string key) {
-            if (key.StartsWith("frags_", StringComparison.OrdinalIgnoreCase)) return "0";
-            if (key.StartsWith("deaths_", StringComparison.OrdinalIgnoreCase)) return "0";
-            if (key.StartsWith("score_", StringComparison.OrdinalIgnoreCase)) return "0";
-            if (key.StartsWith("ping_", StringComparison.OrdinalIgnoreCase)) return "999";
-            if (key.StartsWith("team_", StringComparison.OrdinalIgnoreCase)) return "0";
-
-            switch (key.ToLower()) {
-                case "tostversion":
-                case "protection":
-                case "esemode": return "-";
-                case "frags":
-                case "deaths":
-                case "team":
-                case "score": return "0";
-                case "ping": return "999";
-            }
-            return string.Empty;
         }
 
         public void SetInfo(string data) {
@@ -75,52 +58,61 @@ namespace TacticalOpsQuickJoin {
         {
             if (serverInfo.TryGetValue("gametype", out string gameType))
             {
+                GameType = gameType;
                 IsTO220 = (gameType == "TO220");
                 IsTO340 = (gameType == "TO340");
                 IsTO350 = (gameType == "TO350");
             }
 
             if (serverInfo.TryGetValue("hostname", out string hostname)) ServerName = hostname;
+            if (serverInfo.TryGetValue("maptitle", out string maptitle)) MapTitle = maptitle;
+            if (serverInfo.TryGetValue("password", out string password)) Password = password == "True";
+            if (serverInfo.TryGetValue("hostport", out string hostport)) HostPort = hostport;
+            if (serverInfo.TryGetValue("adminname", out string adminname)) AdminName = adminname;
+            if (serverInfo.TryGetValue("adminemail", out string adminemail)) AdminEmail = adminemail;
+            if (serverInfo.TryGetValue("tostversion", out string tostversion)) TostVersion = tostversion;
+            if (serverInfo.TryGetValue("protection", out string protection)) Protection = protection;
+            if (serverInfo.TryGetValue("esemode", out string esemode)) EseMode = esemode;
+            if (serverInfo.TryGetValue("timelimit", out string timelimit)) TimeLimit = timelimit;
+            if (serverInfo.TryGetValue("minplayers", out string minplayers)) MinPlayers = minplayers;
+            if (serverInfo.TryGetValue("friendlyfire", out string friendlyfire)) FriendlyFire = friendlyfire;
+            if (serverInfo.TryGetValue("explositionff", out string explositionff)) ExplosionFF = explositionff;
+
 
             if (Ping == 999 && serverInfo.TryGetValue("ping", out string pVal) && int.TryParse(pVal, out int p))
                 Ping = p;
 
-            // Calculate actual number of players from player data
             int actualPlayerCount = CountActualPlayers();
-
-            // Use the actual player count if available from server, otherwise use calculated count
             if (serverInfo.TryGetValue("numplayers", out string npVal) && int.TryParse(npVal, out int np)) {
-                // Use the maximum of server-reported count and actual count to handle cases where
-                // the server doesn't report all players in the response but player data exists
                 NumPlayers = Math.Max(np, actualPlayerCount);
             } else {
-                // If server doesn't provide numplayers, use actual count from data
                 NumPlayers = actualPlayerCount;
             }
 
             if (serverInfo.TryGetValue("maxplayers", out string mpVal) && int.TryParse(mpVal, out int mp)) MaxPlayers = mp;
-
-            // --- BOT DETECTION ---
-            // Wir scannen alle Spieler-Pings. Ping 0 = Bot.
-            CalculateBots();
+            
+            CalculateBotsAndPlayers();
         }
 
-        private void CalculateBots()
+        private void CalculateBotsAndPlayers()
         {
+            Players.Clear();
             int bots = 0;
-            // Unreal Engine Player IDs gehen meist von 0 bis 64
             for (int i = 0; i < 64; i++)
             {
-                // Prüfen ob ein Spieler an diesem Index existiert (hat einen Namen?)
-                if (serverInfo.ContainsKey("player_" + i))
+                if (serverInfo.TryGetValue("player_" + i, out string playerName))
                 {
-                    // Ping holen
+                    var player = new Player { Id = i, Name = playerName };
                     if (serverInfo.TryGetValue("ping_" + i, out string pStr) && int.TryParse(pStr, out int p))
                     {
+                        player.Ping = p;
                         if (p == 0) bots++;
                     }
-                    // Fallback: Wenn kein Ping gesendet wurde, aber Spieler existiert, könnte es auch 0 sein,
-                    // aber wir zählen sicherheitshalber nur explizite Nullen.
+                    if (serverInfo.TryGetValue("score_" + i, out string sStr) && int.TryParse(sStr, out int s)) player.Score = s;
+                    if (serverInfo.TryGetValue("frags_" + i, out string fStr) && int.TryParse(fStr, out int f)) player.Kills = f;
+                    if (serverInfo.TryGetValue("deaths_" + i, out string dStr) && int.TryParse(dStr, out int d)) player.Deaths = d;
+                    if (serverInfo.TryGetValue("team_" + i, out string tStr) && int.TryParse(tStr, out int t)) player.Team = t;
+                    Players.Add(player);
                 }
             }
             BotCount = bots;
@@ -129,7 +121,6 @@ namespace TacticalOpsQuickJoin {
         private int CountActualPlayers()
         {
             int actualPlayers = 0;
-            // Count players from player_0 to player_63
             for (int i = 0; i < 64; i++)
             {
                 if (serverInfo.ContainsKey("player_" + i))
@@ -174,19 +165,7 @@ namespace TacticalOpsQuickJoin {
         }
 
         public void ClearPlayerList() {
-            var keysToRemove = serverInfo.Keys
-                .Where(k => k.StartsWith("player_", StringComparison.OrdinalIgnoreCase) ||
-                            k.StartsWith("score_", StringComparison.OrdinalIgnoreCase) ||
-                            k.StartsWith("frags_", StringComparison.OrdinalIgnoreCase) ||
-                            k.StartsWith("deaths_", StringComparison.OrdinalIgnoreCase) ||
-                            k.StartsWith("ping_", StringComparison.OrdinalIgnoreCase) ||
-                            k.StartsWith("team_", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            foreach (string key in keysToRemove) {
-                serverInfo.Remove(key);
-            }
-            // Reset counts since player data is cleared
+            Players.Clear();
             BotCount = 0;
             NumPlayers = 0;
         }
