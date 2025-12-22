@@ -50,28 +50,80 @@ namespace TacticalOpsQuickJoin
                 using var udp = new UdpClient();
                 udp.Connect(serverData.ServerIP, serverData.ServerPort);
 
+                // Initial status request
                 var dataStatus = Encoding.UTF8.GetBytes(@"\status\");
                 await udp.SendAsync(dataStatus, dataStatus.Length);
-                var receiveTask = udp.ReceiveAsync();
-                if (await Task.WhenAny(receiveTask, Task.Delay(2000)) != receiveTask)
-                    throw new SocketException((int)SocketError.TimedOut);
+                
+                var (statusResponseData, statusLogBytes) = await ReceiveDataUntilTimeout(udp);
+                serverData.UpdateInfo(statusResponseData);
 
-                var result = await receiveTask;
-                serverData.UpdateInfo(Encoding.UTF8.GetString(result.Buffer));
-
-                var dataPlayers = Encoding.UTF8.GetBytes(@"\players\");
-                await udp.SendAsync(dataPlayers, dataPlayers.Length);
-                receiveTask = udp.ReceiveAsync();
-                if (await Task.WhenAny(receiveTask, Task.Delay(2000)) == receiveTask)
+                // If not all info received or players info needed, send players request
+                // This mimics the original project's logic of sending players after status data might have been received
+                if (!statusResponseData.Contains(@"\final\") && !string.IsNullOrEmpty(statusResponseData))
                 {
-                    var playerResult = await receiveTask;
-                    serverData.UpdateInfo(Encoding.UTF8.GetString(playerResult.Buffer));
+                    var dataPlayers = Encoding.UTF8.GetBytes(@"\players\");
+                    await udp.SendAsync(dataPlayers, dataPlayers.Length);
+                    var (playersResponseData, playersLogBytes) = await ReceiveDataUntilTimeout(udp);
+                    serverData.UpdateInfo(playersResponseData);
+
+                    // Append player log bytes to status log bytes for a combined view
+                    statusLogBytes = statusLogBytes.Concat(playersLogBytes).ToArray();
                 }
+
+                // Log raw bytes for debugging purposes
+                try
+                {
+                    File.WriteAllBytes("server_response.log", statusLogBytes);
+                }
+                catch { /* Ignore logging errors */ }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error getting details for {serverData.ServerIP}:{serverData.ServerPort}: {ex.Message}");
             }
+        }
+
+        private async Task<(string, byte[])> ReceiveDataUntilTimeout(UdpClient udp)
+        {
+            var allData = new StringBuilder();
+            var allBytes = new List<byte>();
+            
+            // Give the server up to 3 seconds to respond in total for this part
+            var overallTimeoutCts = new CancellationTokenSource(3000); 
+
+            while (!overallTimeoutCts.IsCancellationRequested)
+            {
+                try
+                {
+                    // Wait for a packet for up to 500ms
+                    var receiveTask = udp.ReceiveAsync(overallTimeoutCts.Token);
+                    var completedTask = await Task.WhenAny(receiveTask.AsTask(), Task.Delay(500, overallTimeoutCts.Token));
+
+                    if (completedTask == receiveTask.AsTask())
+                    {
+                        var result = await receiveTask;
+                        allBytes.AddRange(result.Buffer);
+                        string responsePart = Encoding.UTF8.GetString(result.Buffer);
+                        allData.Append(responsePart);
+                    }
+                    else
+                    {
+                        // 500ms passed without a new packet, assume we are done for this phase
+                        break; 
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Overall timeout reached
+                    break;
+                }
+                catch (SocketException)
+                {
+                    // Connection reset by peer or other socket error, stop receiving
+                    break;
+                }
+            }
+            return (allData.ToString(), allBytes.ToArray());
         }
 
         private async Task<ServerData?> QueryServerInfoAsync(int id, string ipStr)

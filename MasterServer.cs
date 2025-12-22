@@ -11,7 +11,7 @@ namespace TacticalOpsQuickJoin
     {
         public class MasterServerInfo
         {
-            public string Address { get; set; }
+            public string? Address { get; set; }
             public int Port { get; set; }
         }
 
@@ -31,6 +31,9 @@ namespace TacticalOpsQuickJoin
             {
                 try
                 {
+                    if (serverInfo.Address == null)
+                        throw new ArgumentNullException(nameof(serverInfo.Address));
+
                     using (TcpClient tcp = new TcpClient())
                     {
                         // Verbinden mit Timeout Token

@@ -33,6 +33,12 @@ namespace TacticalOpsQuickJoin
             set => Settings.Default.favoriteServers = value;
         }
 
+        public string IgnoredServers
+        {
+            get => Settings.Default.ignoredServers;
+            set => Settings.Default.ignoredServers = value;
+        }
+
         public bool DarkMode
         {
             get => Settings.Default.darkMode;

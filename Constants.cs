@@ -5,6 +5,7 @@ namespace TacticalOpsQuickJoin
         // Network timeouts
         public const int DEFAULT_UDP_TIMEOUT = 1500;
         public const int MAP_DOWNLOAD_TIMEOUT = 15000;
+        public const int MAP_PREVIEW_TIMEOUT = 5000;
         
         // Concurrency limits
         public const int MAX_CONCURRENT_PINGS = 100;

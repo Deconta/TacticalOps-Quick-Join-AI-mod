@@ -8,6 +8,8 @@ static class Program
     [STAThread]
     static void Main()
     {
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+        
         // Global exception handlers for crash prevention
         Application.ThreadException += Application_ThreadException;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;

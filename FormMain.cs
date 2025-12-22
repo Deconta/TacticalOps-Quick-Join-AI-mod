@@ -21,15 +21,9 @@ namespace TacticalOpsQuickJoin
     public partial class FormMain : Form
     {
         private readonly HttpClient _httpClient = new();
-
-        private List<ServerData> servers = [];
-        private readonly Dictionary<int, ServerData> _serverLookup = new();
-        private List<MapData> _mapList = [];
-        private readonly Dictionary<string, MapData> _mapLookup = new();
-        private Form? _mapPreviewWindow;
-        private CancellationTokenSource? _hoverTokenSource;
-        private readonly Dictionary<string, Image> _imageCache = new();
-        private readonly HashSet<string> _favoriteServers = [];
+        
+        private readonly IMapPreviewService _mapPreviewService;
+        private readonly ServerListManager _serverListManager;
         private System.Windows.Forms.Timer? _autoRefreshTimer;
         private ThemeManager? _themeManager;
         private bool _isRefreshing;
@@ -42,20 +36,23 @@ namespace TacticalOpsQuickJoin
         private DataGridViewColumn? _sortedColumn;
         private readonly ISettingsService _settingsService;
         private readonly IServerProvider _serverProvider;
+        private readonly IMapService _mapService;
         private ListSortDirection _sortDirection = ListSortDirection.Descending;
 
         public FormMain()
         {
             _settingsService = new SettingsService();
             _serverProvider = new ServerProvider(_settingsService);
+            _mapService = new MapService(_httpClient);
+            _mapPreviewService = new MapPreviewService(_httpClient, SynchronizationContext.Current!);
             InitializeComponent();
 
             this.MinimizeBox = true;
             this.MaximizeBox = false;
 
-            EnableDoubleBuffering(serverListView);
-            EnableDoubleBuffering(playerListView);
-            EnableDoubleBuffering(serverSettingsView);
+            UIHelper.EnableDoubleBuffering(serverListView);
+            UIHelper.EnableDoubleBuffering(playerListView);
+            UIHelper.EnableDoubleBuffering(serverSettingsView);
 
             serverListView.RowHeadersVisible = false;
             serverListView.AllowUserToResizeRows = false;
@@ -85,7 +82,7 @@ namespace TacticalOpsQuickJoin
             serverListView.Scroll += (s, e) =>
             {
                 _isScrolling = true;
-                CloseMapPreview();
+                _mapPreviewService.CloseMapPreview();
                 _scrollTimer?.Stop();
                 _scrollTimer?.Start();
             };
@@ -110,7 +107,7 @@ namespace TacticalOpsQuickJoin
                 serverListView.Columns.Insert(0, favColumn);
             }
 
-            LoadFavorites();
+            _serverListManager = new ServerListManager(_settingsService, _serverProvider);
             ApplyThemeToControls();
             InitializeAutoRefresh();
 
@@ -119,10 +116,10 @@ namespace TacticalOpsQuickJoin
 
             serverListView.CellDoubleClick += serverListView_CellDoubleClick!;
             serverListView.CellMouseEnter += serverListView_CellMouseEnter!;
-            serverListView.CellMouseLeave += serverListView_CellMouseLeave!;
+            serverListView.CellMouseLeave += (s, e) => _mapPreviewService.CloseMapPreview();
             serverListView.ColumnHeaderMouseClick += serverListView_ColumnHeaderMouseClick;
 
-            _ = LoadMapDataAsync();
+            _ = _mapService.LoadMapDataAsync();
             ConfigureColumnWidths();
 
             playerListScoreColumn.ValueType = typeof(Int32);
@@ -181,69 +178,18 @@ namespace TacticalOpsQuickJoin
             _themeApplied = true;
         }
 
-        private async Task LoadMapDataAsync()
-        {
-            string appDataFolder = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string appSpecificFolder = Path.Combine(appDataFolder, "TacticalOpsQuickJoin");
-            if (!Directory.Exists(appSpecificFolder))
-            {
-                Directory.CreateDirectory(appSpecificFolder);
-            }
-            string localJsonPath = Path.Combine(appSpecificFolder, "maps.json");
-
-            try
-            {
-                string jsonString;
-                if (File.Exists(localJsonPath))
-                {
-                    jsonString = await File.ReadAllTextAsync(localJsonPath);
-                }
-                else
-                {
-                    jsonString = await _httpClient.GetStringAsync(Constants.MAP_JSON_URL);
-                    await File.WriteAllTextAsync(localJsonPath, jsonString);
-                }
-                
-                _mapList = JsonSerializer.Deserialize<List<MapData>>(jsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
-                BuildMapLookup();
-            }
-            catch { /* Gulp */ }
-        }
-
-        private void BuildMapLookup()
-        {
-            _mapLookup.Clear();
-            foreach (var map in _mapList)
-            {
-                var normalized = NormalizeMapName(map.Name);
-                if (!_mapLookup.ContainsKey(normalized))
-                    _mapLookup[normalized] = map;
-            }
-        }
-
         private void serverListView_CellMouseEnter(object sender, DataGridViewCellEventArgs e)
         {
             if (_isRefreshing || _isScrolling || e.RowIndex < 0 || e.ColumnIndex != UIConstants.MAP_COLUMN_INDEX) return;
-            if (serverListView.Rows[e.RowIndex].Tag is not int serverId || !_serverLookup.TryGetValue(serverId, out var server)) return;
+            if (serverListView.Rows[e.RowIndex].Tag is not int serverId || !_serverListManager.ServerLookup.TryGetValue(serverId, out var server)) return;
             
             string? mapName = serverListView.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
             if (string.IsNullOrEmpty(mapName)) return;
 
-            var mapData = FindBestMapMatch(mapName);
+            var mapData = _mapService.FindBestMapMatch(mapName);
             string? previewUrl = mapData != null && !string.IsNullOrEmpty(mapData.PreviewSmall) ? mapData.PreviewSmall : mapData?.Preview;
 
-            _hoverTokenSource?.Cancel();
-            _hoverTokenSource = new CancellationTokenSource();
-            
-            Task.Run(async () => {
-                try
-                {
-                    await Task.Delay(Constants.MAP_PREVIEW_DELAY, _hoverTokenSource.Token);
-                    if (!_hoverTokenSource.Token.IsCancellationRequested)
-                        this.BeginInvoke(() => ShowMapPreview(previewUrl, mapData?.Name ?? mapName, server.ServerName, mapName));
-                }
-                catch (TaskCanceledException) {}
-            }, _hoverTokenSource.Token);
+            _mapPreviewService.InitiateMapPreview(previewUrl, mapData?.Name ?? mapName, server.ServerName ?? "Unknown Server", mapName, Cursor.Position);
         }
 
         private void SortServerList()
@@ -256,9 +202,9 @@ namespace TacticalOpsQuickJoin
             var rows = new List<DataGridViewRow>(serverListView.Rows.Cast<DataGridViewRow>());
             rows.Sort((row1, row2) =>
             {
-                if (row1.Tag is not int id1 || row2.Tag is not int id2 || !_serverLookup.TryGetValue(id1, out var s1) || !_serverLookup.TryGetValue(id2, out var s2)) return 0;
-                bool fav1 = _favoriteServers.Contains($"{s1.ServerIP}:{s1.ServerPort}");
-                bool fav2 = _favoriteServers.Contains($"{s2.ServerIP}:{s2.ServerPort}");
+                if (row1.Tag is not int id1 || row2.Tag is not int id2 || !_serverListManager.ServerLookup.TryGetValue(id1, out var s1) || !_serverListManager.ServerLookup.TryGetValue(id2, out var s2)) return 0;
+                bool fav1 = _serverListManager.FavoriteServers.Contains($"{s1.ServerIP}:{s1.ServerPort}");
+                bool fav2 = _serverListManager.FavoriteServers.Contains($"{s2.ServerIP}:{s2.ServerPort}");
                 if (fav1 != fav2) return fav2.CompareTo(fav1);
                 int result = 0;
                 int colIndex = _sortedColumn!.Index;
@@ -282,285 +228,9 @@ namespace TacticalOpsQuickJoin
                 column.HeaderCell.SortGlyphDirection = (column == _sortedColumn) ? (_sortDirection == ListSortDirection.Ascending ? SortOrder.Ascending : SortOrder.Descending) : SortOrder.None;
             serverListView.ResumeLayout();
         }
-
-        private MapData? FindBestMapMatch(string mapName)
-        {
-            if (string.IsNullOrEmpty(mapName) || _mapList.Count == 0) return null;
-
-            string decodedName = System.Net.WebUtility.HtmlDecode(mapName);
-            string normalized = NormalizeMapName(decodedName);
-
-            // Priority mappings - check these first
-            var priorityMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "terroristmansion", "TO-TerrorMansion" },
-                { "terrorsmansion", "TO-TerrorMansion" },
-                { "terrormansion", "TO-TerrorMansion" },
-                { "cia", "TO-CIA" },
-                { "glasgowkiss", "TO-GlasgowKiss" },
-                { "avalanche", "TO-Avalanche" }
-            };
-
-            if (priorityMappings.TryGetValue(normalized, out var priorityName))
-            {
-                var match = _mapList.FirstOrDefault(m => m.Name.Equals(priorityName, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
-
-                // Try without TO- prefix
-                var nameWithoutPrefix = priorityName.StartsWith("TO-") ? priorityName.Substring(3) : priorityName;
-                match = _mapList.FirstOrDefault(m => m.Name.EndsWith(nameWithoutPrefix, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
-
-                // Try partial match with just the name part
-                var namePart = priorityName.Replace("TO-", "").Replace("-", "");
-                match = _mapList.FirstOrDefault(m => m.Name.Replace("-", "").Replace("_", "").Contains(namePart, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
-            }
-
-            // Direct lookup - normalize both sides
-            var directMatch = _mapList.FirstOrDefault(m => NormalizeMapName(m.Name).Equals(normalized, StringComparison.OrdinalIgnoreCase));
-            if (directMatch != null) return directMatch;
-
-            if (normalized.Length < 3) return null;
-
-            MapData? bestMatch = null;
-            int bestScore = 0;
-            int bestLength = int.MaxValue;
-
-            foreach (var map in _mapList)
-            {
-                var mapNormalized = NormalizeMapName(map.Name);
-                int score = 0;
-
-                if (mapNormalized.Equals(normalized, StringComparison.OrdinalIgnoreCase))
-                {
-                    int lengthPenalty = Math.Abs(map.Name.Length - mapName.Length);
-                    score = 1000000 - lengthPenalty * 1000 - map.Name.Length;
-                }
-                else if (mapNormalized.EndsWith(normalized, StringComparison.OrdinalIgnoreCase) && normalized.Length >= 4)
-                {
-                    score = 500000 - (mapNormalized.Length - normalized.Length) * 100 - map.Name.Length;
-                }
-                else if (normalized.EndsWith(mapNormalized, StringComparison.OrdinalIgnoreCase) && mapNormalized.Length >= 4)
-                {
-                    score = 400000 - (normalized.Length - mapNormalized.Length) * 100 - map.Name.Length;
-                }
-                else if (mapNormalized.Contains(normalized, StringComparison.OrdinalIgnoreCase) && normalized.Length >= 4)
-                {
-                    int matchQuality = (normalized.Length * 100) / mapNormalized.Length;
-                    score = 300000 + matchQuality * 1000 - map.Name.Length;
-                }
-                else if (normalized.Contains(mapNormalized, StringComparison.OrdinalIgnoreCase) && mapNormalized.Length >= 4)
-                {
-                    int matchQuality = (mapNormalized.Length * 100) / normalized.Length;
-                    score = 200000 + matchQuality * 1000 - map.Name.Length;
-                }
-                else if (LevenshteinDistance(mapNormalized, normalized) <= 3 && Math.Abs(mapNormalized.Length - normalized.Length) <= 3)
-                {
-                    score = 100000 - LevenshteinDistance(mapNormalized, normalized) * 10000 - map.Name.Length;
-                }
-                else
-                {
-                    int commonChars = CountCommonSubstring(normalized, mapNormalized);
-                    if (commonChars >= Math.Min(normalized.Length, mapNormalized.Length) * 0.6 && commonChars >= 4)
-                    {
-                        score = commonChars * 1000 - map.Name.Length;
-                    }
-                }
-
-                if (score > bestScore || (score == bestScore && map.Name.Length < bestLength))
-                {
-                    bestScore = score;
-                    bestMatch = map;
-                    bestLength = map.Name.Length;
-                }
-            }
-
-            return bestScore > 0 ? bestMatch : null;
-        }
-
-        private int CountCommonSubstring(string s1, string s2)
-        {
-            int maxLen = 0;
-            for (int i = 0; i < s1.Length; i++)
-            {
-                for (int j = 0; j < s2.Length; j++)
-                {
-                    int len = 0;
-                    while (i + len < s1.Length && j + len < s2.Length &&
-                           char.ToLower(s1[i + len]) == char.ToLower(s2[j + len]))
-                    {
-                        len++;
-                    }
-                    if (len > maxLen) maxLen = len;
-                }
-            }
-            return maxLen;
-        }
-
-        private int LevenshteinDistance(string s1, string s2)
-        {
-            int[,] d = new int[s1.Length + 1, s2.Length + 1];
-            for (int i = 0; i <= s1.Length; i++) d[i, 0] = i;
-            for (int j = 0; j <= s2.Length; j++) d[0, j] = j;
-
-            for (int j = 1; j <= s2.Length; j++)
-            {
-                for (int i = 1; i <= s1.Length; i++)
-                {
-                    int cost = s1[i - 1] == s2[j - 1] ? 0 : 1;
-                    d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
-                }
-            }
-            return d[s1.Length, s2.Length];
-        }
-
-        private string NormalizeMapName(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return "";
-
-            name = System.Net.WebUtility.HtmlDecode(name);
-
-            // Remove quotes first
-            name = name.Trim('\'', '"').Trim();
-
-            // Remove text prefixes BEFORE removing special chars
-            if (name.StartsWith("Code-name:", StringComparison.OrdinalIgnoreCase))
-                name = name.Substring(10).Trim();
-            else if (name.StartsWith("Codename:", StringComparison.OrdinalIgnoreCase))
-                name = name.Substring(9).Trim();
-            else if (name.StartsWith("2nd -W-", StringComparison.OrdinalIgnoreCase))
-                name = name.Substring(7).Trim();
-
-            name = name.Replace("'s ", "").Replace("'s", "");
-
-            var prefixes = new[] { "TO-", "CTF-", "DM-", "AS-", "=FoE=", "-FoE-", "@8-", "-2-", "-X-", "-x-", "2W-", "SWAT-" };
-            foreach (var prefix in prefixes)
-            {
-                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    name = name.Substring(prefix.Length);
-                    break;
-                }
-            }
-
-            name = name.Replace("][", "").Replace(" v", "V").Replace(" V", "V")
-                      .Replace("{", "").Replace("}", "").Replace("@", "")
-                      .Replace("=", "").Replace("+", "").Replace("'", "").Replace("'", "")
-                      .Replace("*", "").Replace(":", "").Replace("(", "").Replace(")", "")
-                      .Replace(" ", "").Replace("-", "").Replace("_", "").Trim().ToLowerInvariant();
-
-            return name;
-        }
 		
-        private void LoadFavorites()
-        {
-            try
-            {
-                var favorites = (_settingsService.FavoriteServers ?? "").Split(',');
-                foreach (var fav in favorites.Where(f => !string.IsNullOrWhiteSpace(f)))
-                    _favoriteServers.Add(fav.Trim());
-            }
-            catch { }
-        }
-
-        private void SaveFavorites()
-        {
-            try
-            {
-                _settingsService.FavoriteServers = string.Join(",", _favoriteServers);
-                _settingsService.Save();
-            }
-            catch { }
-        }
-
-        private void ToggleFavorite(string serverKey)
-        {
-            if (!_favoriteServers.Remove(serverKey))
-                _favoriteServers.Add(serverKey);
-            SaveFavorites();
-        }
-
-        private void serverListView_CellMouseLeave(object sender, DataGridViewCellEventArgs e) => CloseMapPreview();
-
-        private void CloseMapPreview()
-        {
-            _hoverTokenSource?.Cancel();
-            _mapPreviewWindow?.Close();
-            _mapPreviewWindow = null;
-        }
-
-        private async void ShowMapPreview(string? imageUrl, string mapName, string serverName, string currentMap)
-        {
-            if (_mapPreviewWindow != null) return;
-            // Defensive null check for _httpClient, though it should be initialized.
-            if (_httpClient == null)
-            {
-                Debug.WriteLine("Error: _httpClient is null in ShowMapPreview.");
-                return;
-            }
-
-            Form newPreviewWindow = null; // Create locally first
-            try
-            {
-                newPreviewWindow = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, ShowInTaskbar = false, BackColor = Color.Black, Size = new Size(384, 266), TopMost = true };
-                newPreviewWindow.Click += (s, e) => newPreviewWindow?.Close();
-                newPreviewWindow.Location = new Point(Cursor.Position.X + 20, Cursor.Position.Y + 20);
-
-                var headerPanel = new Panel { Dock = DockStyle.Top, Height = 50, BackColor = Color.FromArgb(45, 45, 48), Padding = new Padding(10, 5, 10, 5) };
-                var serverLabel = new Label { Text = serverName, Dock = DockStyle.Top, ForeColor = Color.WhiteSmoke, Font = new Font("Segoe UI", 10, FontStyle.Bold), AutoSize = false, Height = 22, TextAlign = ContentAlignment.MiddleLeft };
-                var mapLabel = new Label { Text = $"Map: {currentMap}", Dock = DockStyle.Top, ForeColor = Color.LightGray, Font = new Font("Segoe UI", 9), AutoSize = false, Height = 20, TextAlign = ContentAlignment.MiddleLeft };
-                headerPanel.Controls.AddRange(new Control[] { mapLabel, serverLabel });
-                newPreviewWindow.Controls.Add(headerPanel);
-
-                if (string.IsNullOrEmpty(imageUrl)) { 
-                     var label = new Label { Text = $"🗺️\n\nNo preview available\nfor this map\n\n{mapName}", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.LightGray, BackColor = Color.FromArgb(45, 45, 48), Font = new Font("Segoe UI", 11) };
-                    newPreviewWindow.Controls.Add(label);
-                } else {
-                    var pictureBox = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(32, 32, 32) };
-                    pictureBox.Click += (s, e) => newPreviewWindow?.Close();
-                    newPreviewWindow.Controls.Add(pictureBox);
-
-                    try {
-                        Debug.WriteLine($"ShowMapPreview: Attempting to download image from URL: {imageUrl}");
-                        if (_imageCache.TryGetValue(imageUrl, out var cachedImage)) pictureBox.Image = cachedImage;
-                        else {
-                            // Defensive check: _httpClient could be null here if it somehow got nulled or disposed after the initial check.
-                            if (_httpClient == null)
-                            {
-                                Debug.WriteLine("Error: _httpClient is unexpectedly null just before GetStreamAsync.");
-                                newPreviewWindow?.Close(); // Close the window to prevent further issues.
-                                return;
-                            }
-                            using var cts = new CancellationTokenSource(5000);
-                            using var stream = await _httpClient.GetStreamAsync(imageUrl, cts.Token); 
-                            var image = Image.FromStream(stream);
-                            pictureBox.Image = image;
-                            if (_imageCache.Count < 50) _imageCache[imageUrl] = image;
-                        }
-                    } catch (Exception ex) { 
-                        Debug.WriteLine($"ShowMapPreview: Image download failed for {imageUrl}: {ex.Message}");
-                        // If image download fails, show a "No preview" message instead of crashing
-                        var label = new Label { Text = $"🗺️\n\nFailed to load preview\n\n{mapName}", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.LightGray, BackColor = Color.FromArgb(45, 45, 48), Font = new Font("Segoe UI", 11) };
-                        newPreviewWindow.Controls.Remove(pictureBox); // Remove the broken picture box
-                        newPreviewWindow.Controls.Add(label);
-                    }
-                }
-                
-                _mapPreviewWindow = newPreviewWindow; // Assign to class field ONLY IF successful
-                _mapPreviewWindow.Show(); // Now show the window
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"ShowMapPreview: General error during window setup: {ex.Message}");
-                newPreviewWindow?.Close(); // Close if it was created but not assigned to _mapPreviewWindow
-                newPreviewWindow = null;
-            }
-        }
-
-        private async void Form1_Load(object sender, EventArgs e) => await RefreshServerListAsync();
-        private async void btnRefresh_Click(object sender, EventArgs e) => await RefreshServerListAsync();
-
+                private async void Form1_Load(object sender, EventArgs e) => await RefreshServerListAsync();
+                private async void btnRefresh_Click(object sender, EventArgs e) => await RefreshServerListAsync();
         private async Task RefreshServerListAsync()
         {
             if (_isRefreshing) return;
@@ -569,12 +239,10 @@ namespace TacticalOpsQuickJoin
             {
                 lblDownloadState.Text = "Contacting master servers...";
                 serverListView.Rows.Clear();
-                servers.Clear();
-                _serverLookup.Clear();
                 
-                await _serverProvider.GetServerListAsync(server =>
+                await _serverListManager.RefreshServerListAsync(server =>
                 {
-                    Invoke(new Action(() => AddServer(server)));
+                    Invoke(new Action(() => AddServerToGrid(server)));
                 });
                 
                 lblDownloadState.Text = $"Done. {serverListView.Rows.Count} servers online.";
@@ -583,24 +251,17 @@ namespace TacticalOpsQuickJoin
             finally { _isRefreshing = false; }
         }
 
-        private void AddServer(ServerData serverData)
-        {
-            servers.Add(serverData);
-            _serverLookup[serverData.Id] = serverData;
-            AddServerToGrid(serverData);
-        }
-
         private void AddServerToGrid(ServerData serverData)
         {
             var newRow = new DataGridViewRow();
             newRow.CreateCells(serverListView,
-                _favoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆",
+                _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆",
                 serverData.Password ? $"🔒 {serverData.ServerName}" : serverData.ServerName,
                 serverData.MapTitle,
                 serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}",
                 serverData.Ping, serverData.GameType);
             newRow.Tag = serverData.Id;
-            bool isFavorite = _favoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}");
+            bool isFavorite = _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}");
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.ForeColor = isFavorite ? Color.Yellow : Color.Gray;
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray; 
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Font = _starFont;
@@ -616,6 +277,27 @@ namespace TacticalOpsQuickJoin
             }
         }
 
+        private void UpdateServerGridRow(DataGridViewRow row, ServerData serverData)
+        {
+            // Update the cells of the given row
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Value = _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆";
+            row.Cells[1].Value = serverData.Password ? $"🔒 {serverData.ServerName}" : serverData.ServerName;
+            row.Cells[UIConstants.MAP_COLUMN_INDEX].Value = serverData.MapTitle;
+            row.Cells[UIConstants.PLAYERS_COLUMN_INDEX].Value = serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}";
+            row.Cells[UIConstants.PING_COLUMN_INDEX].Value = serverData.Ping;
+            row.Cells[UIConstants.VERSION_COLUMN_INDEX].Value = serverData.GameType;
+
+            // Update styles
+            bool isFavorite = _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}");
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.ForeColor = isFavorite ? Color.Yellow : Color.Gray;
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray;
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Font = _starFont;
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            var pingColor = PlayerListRenderer.GetPingColor(serverData.Ping);
+            row.Cells[UIConstants.PING_COLUMN_INDEX].Style.BackColor = pingColor;
+            row.Cells[UIConstants.PING_COLUMN_INDEX].Style.SelectionBackColor = pingColor;
+        }
+
         private async void serverListView_SelectionChanged(object sender, EventArgs e)
         {
             if (serverListView.SelectedRows.Count == 0 || serverSettingsView?.Parent == null) return;
@@ -627,7 +309,7 @@ namespace TacticalOpsQuickJoin
             lblWaitingForResponse.Show();
             try
             {
-                if (serverListView.SelectedRows[0].Tag is int index && _serverLookup.TryGetValue(index, out var server))
+                if (serverListView.SelectedRows[0].Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
                 {
                     server.ClearPlayerList();
                     await _serverProvider.GetServerDetailsAsync(server);
@@ -642,16 +324,16 @@ namespace TacticalOpsQuickJoin
         private void UpdateStatusInfoUI(ServerData serverData)
         {
             var settings = new Dictionary<string, string> { 
-                ["Admin Name"] = serverData.AdminName, 
-                ["Admin Email"] = serverData.AdminEmail, 
-                ["TOST Version"] = serverData.TostVersion, 
-                ["ESE Version"] = serverData.Protection, 
-                ["ESE Mode"] = serverData.EseMode, 
+                ["Admin Name"] = serverData.GetProperty("adminname") ?? "N/A", 
+                ["Admin Email"] = serverData.GetProperty("adminemail") ?? "N/A", 
+                ["TOST Version"] = serverData.GetProperty("tostversion") ?? "N/A", 
+                ["ESE Version"] = serverData.GetProperty("protection") ?? "N/A", 
+                ["ESE Mode"] = serverData.GetProperty("esemode") ?? "N/A", 
                 ["Password"] = serverData.Password.ToString(), 
-                ["Time Limit"] = serverData.TimeLimit, 
-                ["Min Players"] = serverData.MinPlayers, 
-                ["Friendly Fire"] = serverData.FriendlyFire, 
-                ["Explosion FF"] = serverData.ExplosionFF
+                ["Time Limit"] = serverData.GetProperty("timelimit") ?? "N/A", 
+                ["Min Players"] = serverData.GetProperty("minplayers") ?? "N/A", 
+                ["Friendly Fire"] = serverData.GetProperty("friendlyfire") ?? "N/A", 
+                ["Explosion FF"] = serverData.GetProperty("explositionff") ?? "N/A"
             };
             if (serverSettingsView.Parent is not Control settingsContainer) return;
             var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(5, 5, 5, btnJoinServer.Height + 5), BackColor = _themeManager?.GetPanelBackColor() ?? SystemColors.Control };
@@ -664,11 +346,47 @@ namespace TacticalOpsQuickJoin
             foreach (var (key, value) in settings)
                 panel.Controls.Add(new Label { Text = $"{key.PadRight(18)}: {value}", AutoSize = true, ForeColor = labelColor, Font = monoFont });
             
-            if (serverData.Players.Count == 0) lblNoPlayers.Show();
+            // Populate Player List
+            playerListView.Rows.Clear();
+            serverData.Players.Clear(); // Clear existing players before re-populating
+
+            int numPlayers = 0;
+            if (int.TryParse(serverData.GetProperty("numplayers"), out int parsedNumPlayers))
+            {
+                numPlayers = parsedNumPlayers;
+            }
+
+            if (numPlayers == 0)
+            {
+                lblNoPlayers.Show();
+            }
             else
             {
                 lblNoPlayers.Hide();
-                PlayerListRenderer.RenderPlayerList(playerListView, serverData);
+                for (int i = 0; i < numPlayers; i++)
+                {
+                    string playerName = serverData.GetProperty("player_" + i.ToString());
+                    if (!string.IsNullOrEmpty(playerName))
+                    {
+                        int score = Convert.ToInt32(serverData.GetProperty("score_" + i.ToString()));
+                        int kills = Convert.ToInt32(serverData.GetProperty("frags_" + i.ToString()));
+                        int deaths = Convert.ToInt32(serverData.GetProperty("deaths_" + i.ToString()));
+                        int ping = Convert.ToInt32(serverData.GetProperty("ping_" + i.ToString()));
+                        int team = Convert.ToInt32(serverData.GetProperty("team_" + i.ToString()));
+
+                        var player = new Player { 
+                            Id = i, 
+                            Name = playerName, 
+                            Score = score, 
+                            Kills = kills, 
+                            Deaths = deaths, 
+                            Ping = ping, 
+                            Team = team 
+                        };
+                        serverData.Players.Add(player);
+                    }
+                }
+                PlayerListRenderer.RenderPlayerList(playerListView, serverData); // Render all players at once
                 playerListView.Sort(playerListScoreColumn, ListSortDirection.Descending);
                 playerListView.Sort(playerListTeamColumn, ListSortDirection.Descending);
             }
@@ -678,14 +396,12 @@ namespace TacticalOpsQuickJoin
         {
             var row = serverListView.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag is int id && id == serverData.Id);
             if (row == null) return;
-            row.Cells[UIConstants.MAP_COLUMN_INDEX].Value = serverData.MapTitle;
-            row.Cells[UIConstants.PLAYERS_COLUMN_INDEX].Value = serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}";
-            row.Cells[UIConstants.PING_COLUMN_INDEX].Value = serverData.Ping;
+            UpdateServerGridRow(row, serverData);
         }
 
         private void btnJoinServer_Click(object sender, EventArgs e)
         {
-            if (serverListView.CurrentRow?.Tag is not int index || !_serverLookup.TryGetValue(index, out var server)) return;
+            if (serverListView.CurrentRow?.Tag is not int index || !_serverListManager.ServerLookup.TryGetValue(index, out var server)) return;
             string version = server.IsTO340 ? "3.4" : server.IsTO350 ? "3.5" : server.IsTO220 ? "2.2" : "";
             if (!string.IsNullOrEmpty(version))
             {
@@ -734,12 +450,12 @@ namespace TacticalOpsQuickJoin
             if (e.RowIndex < 0) return;
             if (e.Button == MouseButtons.Left && e.ColumnIndex == UIConstants.FAVORITES_COLUMN_INDEX)
             {
-                if (serverListView.Rows[e.RowIndex].Tag is int id && _serverLookup.TryGetValue(id, out var s))
+                if (serverListView.Rows[e.RowIndex].Tag is int id && _serverListManager.ServerLookup.TryGetValue(id, out var s))
                 {
                     string key = $"{s.ServerIP}:{s.ServerPort}";
-                    ToggleFavorite(key);
+                    _serverListManager.ToggleFavorite(key);
                     var cell = serverListView.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                    bool isFav = _favoriteServers.Contains(key);
+                    bool isFav = _serverListManager.FavoriteServers.Contains(key);
                     cell.Value = isFav ? "★" : "☆";
                     cell.Style.ForeColor = isFav ? Color.Yellow : Color.Gray;
                     SortServerList();
@@ -755,7 +471,7 @@ namespace TacticalOpsQuickJoin
 
         private void copyIPToolStripMenuItem_Click(object? sender, EventArgs e)
         {
-            if (serverListView.CurrentRow?.Tag is int index && _serverLookup.TryGetValue(index, out var server))
+            if (serverListView.CurrentRow?.Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
                 Clipboard.SetText($"unreal://{server.ServerIP}:{server.HostPort}");
         }
 
@@ -775,8 +491,7 @@ namespace TacticalOpsQuickJoin
             _sortTimer?.Dispose();
             _scrollTimer?.Stop();
             _scrollTimer?.Dispose();
-            CloseMapPreview();
-            foreach (var img in _imageCache.Values) img?.Dispose();
+            _mapPreviewService.CloseMapPreview();
             _themeManager?.Dispose();
             _starFont?.Dispose();
             _httpClient?.Dispose();
@@ -818,32 +533,29 @@ namespace TacticalOpsQuickJoin
             }
         }
 
-        private void EnableDoubleBuffering(Control control) => typeof(Control).InvokeMember("DoubleBuffered", System.Reflection.BindingFlags.SetProperty | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, null, control, new object[] { true });
-
         private async void refreshServersToolStripMenuItem_Click(object? sender, EventArgs e) => await RefreshServerListAsync();
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
         {
-            if (serverListView.CurrentRow?.Tag is int index && _serverLookup.TryGetValue(index, out var server))
-                addToFavoritesToolStripMenuItem.Text = _favoriteServers.Contains($"{server.ServerIP}:{server.ServerPort}") ? "Von Favoriten entfernen" : "Zu Favoriten hinzufügen";
+            if (serverListView.CurrentRow?.Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
+                addToFavoritesToolStripMenuItem.Text = _serverListManager.FavoriteServers.Contains($"{server.ServerIP}:{server.ServerPort}") ? "Von Favoriten entfernen" : "Zu Favoriten hinzufügen";
         }
 
         private void addToFavoritesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            if (serverListView.CurrentRow?.Tag is int serverId && _serverLookup.TryGetValue(serverId, out var server))
+            if (serverListView.CurrentRow?.Tag is int serverId && _serverListManager.ServerLookup.TryGetValue(serverId, out var server))
             {
                 string key = $"{server.ServerIP}:{server.ServerPort}";
-                ToggleFavorite(key);
+                _serverListManager.ToggleFavorite(key);
                 var cell = serverListView.CurrentRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX];
-                bool isFav = _favoriteServers.Contains(key);
+                bool isFav = _serverListManager.FavoriteServers.Contains(key);
                 cell.Value = isFav ? "★" : "☆";
                 cell.Style.ForeColor = isFav ? Color.Yellow : Color.Gray;
                 SortServerList();
             }
         }
-
         private async void refreshServerToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            if (serverListView.CurrentRow?.Tag is int index && _serverLookup.TryGetValue(index, out var server))
+            if (serverListView.CurrentRow?.Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
                 await RefreshSingleServerAsync(server);
         }
 

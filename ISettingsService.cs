@@ -9,6 +9,7 @@ namespace TacticalOpsQuickJoin
         bool CloseOnJoin { get; set; }
         string MasterServers { get; set; }
         string FavoriteServers { get; set; }
+        string IgnoredServers { get; set; }
         bool DarkMode { get; set; }
         int AutoRefreshInterval { get; set; }
         void Save();
