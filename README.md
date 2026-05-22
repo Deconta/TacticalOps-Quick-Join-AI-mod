@@ -1,132 +1,125 @@
-# 🎮 Tactical Ops Quick Join - AI-Mod
+# 🎮 Tactical Ops Quick Join - AI Mod
 
-A modern, fast server browser for Tactical Ops with advanced features and an improved user interface.
+A fast Windows server browser for Tactical Ops with favorites, map previews, player details, and a compact dark/light UI.
 
-**The project was completely modified by AI.**
-
-![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**Light Mode:** 
-
-<img width="879" height="708" alt="image" src="https://github.com/user-attachments/assets/d63bee69-a359-462e-ab2f-442fd952e4e7" />
-
 ## ✨ Features
 
-- **🌐 Real-time Server Browser** - Browse all available Tactical Ops servers instantly
-- **🗺️ Fast Map Preview** - Optimized image loading with cache (256x144 thumbnails)
-- **📊 Ping Display** - Shows latency to each server with color coding
-- **👥 Player Details** - Detailed player information and statistics
-- **⭐ Favorites System** - Mark your favorite servers for quick access
-- **🎨 Dark/Light Theme** - Switchable design for your preference
-- **🔄 Auto-Refresh** - Automatic server list updates
-- **⌨️ Keyboard Shortcuts** - Quick actions with F5, Enter, and Escape
-- **🎯 Version Filter** - Filter servers by TO version (2.2, 3.4, 3.5)
-
-**Dark Mode:** 
-
-<img width="879" height="708" alt="image" src="https://github.com/user-attachments/assets/f12adaac-36c7-430e-a4cc-e399f2d6d325" />
-
-**Map Preview**(Hover your mouse over a map name)**:** 
-
-<img width="875" height="703" alt="image" src="https://github.com/user-attachments/assets/5bb33775-8a07-4abd-a884-f8fab637cf25" />
+- 🌐 Real-time Tactical Ops server browser
+- 📊 Ping display with color coding
+- 👥 Player details with fake/min-player filler filtering
+- ⭐ Favorites system
+- 🎨 Dark/light theme
+- 🔄 Auto-refresh
+- 🗺️ Map preview on hover with cache and mirror fallback URLs
+- 🎯 Improved map matching for common server display names
+- ⚡ Single-server refresh including ping, status, player count, and player list
+- 📦 Standalone Windows release build
 
 ## 📥 Installation
 
-### Requirements
-- Windows 10/11
-- .NET 8 Runtime (included in self-contained build)
-- Tactical Ops installed
+### Standalone build
 
-### Download
-1. Download the latest `TacticalOpsQuickJoin.exe` from [Releases](../../releases)
-2. Install .NET Desktop Runtime 8.0.22 [Microsoft.com](https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-desktop-8.0.22-windows-x64-installer)
-3. Run the executable
-4. That's it! No installation needed.
+Download `TacticalOpsQuickJoin.exe` from the release package and run it.
+
+The standalone build is self-contained, so the .NET Desktop Runtime does not need to be installed separately.
+
+### Requirements
+
+- Windows 10/11 x64
+- Tactical Ops installed locally for joining servers
+- Internet access for server list and map previews
 
 ## 🎮 Usage
 
 ### Joining Servers
-1. Select a server from the list
-2. Click "Join Server" or double-click the server
+
+1. Select a server from the list.
+2. Click `Join Server`, press `Enter`, or double-click the server.
 
 ### Map Preview
-- Hover your mouse over a map name
-- A preview window appears after a short delay
-- Move away to close the preview
+
+- Hover over a map name.
+- A preview window appears after a short delay.
+- Move the mouse away to close the preview.
 
 ### Favorites
-- Click the ☆ icon to add a server to favorites
-- Favorite servers appear at the top of the list
+
+- Click the star column to toggle a server as favorite.
+- Favorite servers are sorted above regular servers.
+
+### Refresh
+
+- Press `F5` or use `Menu > Refresh Servers` to refresh the full server list.
+- Right-click a server and choose `Diesen Server aktualisieren` to refresh only that server, including ping and player details.
 
 ## ⌨️ Keyboard Shortcuts
 
 | Key | Action |
-|-----|--------|
-| **F5** | Refresh server list |
-| **Escape** | Minimize application |
-| **Enter** | Join selected server |
-
-## 🎨 Themes
-
-Switch between light and dark mode:
-- **Menu → Toggle Theme**
-- Setting is saved automatically
+| --- | --- |
+| `F5` | Refresh server list |
+| `Escape` | Minimize application |
+| `Enter` | Join selected server |
 
 ## ⚙️ Configuration
 
-The application saves settings automatically:
-- Theme preference (Light/Dark)
-- Window position and size
-- "Close on join" setting
+Settings are saved automatically:
+
+- Theme preference
+- Close-on-join setting
 - Favorite servers
 - Master server list
+- Tactical Ops executable paths
 
 ## 🛠️ Development
 
-### Build from Source
-```bash
-dotnet build --configuration Release
+### Build
+
+```powershell
+dotnet build TacticalOpsQuickJoin-Mod.sln
 ```
 
-### Create Release Build
-```bash
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+### Standalone Release EXE
+
+```powershell
+dotnet publish TacticalOpsQuickJoin.csproj -c Release -r win-x64 --self-contained true -o .\publish\win-x64-single-exe
 ```
 
-## 📊 Map Data
+The standalone executable is written to:
 
-The program loads map preview images from:
-1. **Online**: Tactical-Ops.eu/map-screenshots/ (automatic)
-2. **Local**: `maps.json` in program folder (fallback)
+```text
+publish\win-x64-single-exe\TacticalOpsQuickJoin.exe
+```
 
-Map data provided by [Tactical-Ops.eu](https://mirror.tactical-ops.eu/map-screenshots/)
+## 🗺️ Map Data
 
-## 🐛 Known Issues
+Map metadata is loaded from the online `custom_maps.json` source and cached under:
 
-- Map preview requires internet connection
-- Some older TO versions may not be recognized
-- Firewall can block server ping
+```text
+%AppData%\TacticalOpsQuickJoin\maps.json
+```
 
-## 🤝 Contributing
+If a map is missing from the JSON cache, the app falls back to direct Tactical-Ops.eu mirror screenshot URLs.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Map previews are provided by:
+
+https://mirror.tactical-ops.eu/map-screenshots/
+
+## 🐛 Known Notes
+
+- Map preview requires internet access.
+- Some servers report fake/min-player filler entries. Known fake player entries are filtered from display and sorting.
+- Firewall rules can block UDP server queries or Tactical Ops joining.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-- Tactical Ops Community
-- Map data provided by [Tactical-Ops.eu](https://mirror.tactical-ops.eu/map-screenshots/)
-- Original project inspiration [Original-Author](https://github.com/jilderthoekstra/Tactical-Ops-Quick-Join)
-
-## 📞 Support
-
-For issues or questions:
-- Open an [Issue](../../issues)
-- Contact the TO Community
-
----
+- Tactical Ops community
+- Tactical-Ops.eu mirror and map screenshots
+- Original project inspiration: https://github.com/jilderthoekstra/Tactical-Ops-Quick-Join
