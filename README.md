@@ -19,6 +19,11 @@ A fast Windows server browser for Tactical Ops with favorites, map previews, pla
 - ⚡ Single-server refresh including ping, status, player count, and player list
 - 📦 Standalone Windows release build
 
+<img width="977" height="730" alt="image" src="https://github.com/user-attachments/assets/264225ac-932b-4ff0-b0a6-49d19440f14d" />
+<img width="976" height="727" alt="image" src="https://github.com/user-attachments/assets/a0e0b6b4-9fe6-4914-ae08-cf6ab8673a62" />
+<img width="976" height="726" alt="image" src="https://github.com/user-attachments/assets/7132411b-d42f-41df-bae2-889df723e327" />
+
+
 ## 📥 Installation
 
 ### Standalone build
