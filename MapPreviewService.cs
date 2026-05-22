@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -76,22 +77,8 @@ namespace TacticalOpsQuickJoin
                     newPreviewWindow.Controls.Add(pictureBox);
 
                     try {
-                        Debug.WriteLine($"ShowMapPreview: Attempting to download image from URL: {imageUrl}");
-                        if (_imageCache.TryGetValue(imageUrl, out var cachedImage)) pictureBox.Image = cachedImage;
-                        else {
-                            // Defensive check: _httpClient could be null here if it somehow got nulled or disposed after the initial check.
-                            if (_httpClient == null)
-                            {
-                                Debug.WriteLine("Error: _httpClient is unexpectedly null just before GetStreamAsync.");
-                                newPreviewWindow?.Close(); // Close the window to prevent further issues.
-                                return;
-                            }
-                            using var cts = new CancellationTokenSource(5000);
-                            using var stream = await _httpClient.GetStreamAsync(imageUrl, cts.Token); 
-                            var image = Image.FromStream(stream);
-                            pictureBox.Image = image;
-                            if (_imageCache.Count < 50) _imageCache[imageUrl] = image;
-                        }
+                        var image = await LoadPreviewImageAsync(imageUrl);
+                        pictureBox.Image = image;
                     } catch (Exception ex) { 
                         Debug.WriteLine($"ShowMapPreview: Image download failed for {imageUrl}: {ex.Message}");
                         // If image download fails, show a "No preview" message instead of crashing
@@ -110,6 +97,72 @@ namespace TacticalOpsQuickJoin
                 newPreviewWindow?.Close(); // Close if it was created but not assigned to _mapPreviewWindow
                 newPreviewWindow = null;
             }
+        }
+
+        private async Task<Image> LoadPreviewImageAsync(string imageUrl)
+        {
+            foreach (var candidateUrl in BuildImageUrlCandidates(imageUrl))
+            {
+                Debug.WriteLine($"ShowMapPreview: Attempting to download image from URL: {candidateUrl}");
+                if (_imageCache.TryGetValue(candidateUrl, out var cachedImage))
+                    return cachedImage;
+
+                try
+                {
+                    using var cts = new CancellationTokenSource(5000);
+                    using var stream = await _httpClient.GetStreamAsync(candidateUrl, cts.Token);
+                    var image = Image.FromStream(stream);
+                    if (_imageCache.Count < 50) _imageCache[candidateUrl] = image;
+                    return image;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"ShowMapPreview: Image download failed for {candidateUrl}: {ex.Message}");
+                }
+            }
+
+            throw new InvalidOperationException($"No preview image candidate could be loaded for {imageUrl}");
+        }
+
+        private static IEnumerable<string> BuildImageUrlCandidates(string imageUrl)
+        {
+            yield return imageUrl;
+
+            if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out var uri))
+                yield break;
+
+            string fileName = Path.GetFileNameWithoutExtension(uri.AbsolutePath);
+            string extension = Path.GetExtension(uri.AbsolutePath);
+            if (string.IsNullOrEmpty(fileName) || string.IsNullOrEmpty(extension))
+                yield break;
+
+            foreach (var candidateName in BuildFileNameCandidates(fileName).Skip(1))
+            {
+                var builder = new UriBuilder(uri)
+                {
+                    Path = uri.AbsolutePath[..^Path.GetFileName(uri.AbsolutePath).Length] + Uri.EscapeDataString(candidateName + extension)
+                };
+                yield return builder.Uri.ToString();
+            }
+        }
+
+        private static IEnumerable<string> BuildFileNameCandidates(string fileName)
+        {
+            yield return fileName;
+
+            string[] smallWords = { "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "vs" };
+            var parts = fileName.Split('-');
+            if (parts.Length <= 1) yield break;
+
+            var withSmallWords = parts
+                .Select((part, index) => index == 0 || !smallWords.Contains(part, StringComparer.OrdinalIgnoreCase)
+                    ? part
+                    : part.ToLowerInvariant())
+                .ToArray();
+
+            string smallWordVariant = string.Join("-", withSmallWords);
+            if (!smallWordVariant.Equals(fileName, StringComparison.Ordinal))
+                yield return smallWordVariant;
         }
 
         public void CloseMapPreview()

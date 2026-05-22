@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -28,6 +28,8 @@ namespace TacticalOpsQuickJoin
         private ThemeManager? _themeManager;
         private bool _isRefreshing;
         private Font? _starFont;
+        private Font? _settingsHeaderFont;
+        private Font? _settingsMonoFont;
         private bool _themeApplied;
         private System.Windows.Forms.Timer? _sortTimer;
         private bool _needsSort;
@@ -38,6 +40,9 @@ namespace TacticalOpsQuickJoin
         private readonly IServerProvider _serverProvider;
         private readonly IMapService _mapService;
         private ListSortDirection _sortDirection = ListSortDirection.Descending;
+        private int _selectionRequestId;
+        private int _serverListRefreshId;
+        private readonly SemaphoreSlim _detailsSemaphore = new(1, 1);
 
         public FormMain()
         {
@@ -49,6 +54,7 @@ namespace TacticalOpsQuickJoin
 
             this.MinimizeBox = true;
             this.MaximizeBox = false;
+            ApplyModernChrome();
 
             UIHelper.EnableDoubleBuffering(serverListView);
             UIHelper.EnableDoubleBuffering(playerListView);
@@ -88,6 +94,8 @@ namespace TacticalOpsQuickJoin
             };
 
             _starFont = UIConstants.Fonts.StarFont;
+            _settingsHeaderFont = UIConstants.Fonts.HeaderFont;
+            _settingsMonoFont = UIConstants.Fonts.MonospaceFont;
 
             _themeManager = new ThemeManager(this, _settingsService.DarkMode);
             if (Controls.Find("menuStrip1", true).FirstOrDefault() is MenuStrip menuStrip)
@@ -100,9 +108,13 @@ namespace TacticalOpsQuickJoin
                 var favColumn = new DataGridViewTextBoxColumn
                 {
                     Name = "FavColumn",
-                    HeaderText = "★",
+                    HeaderText = UIConstants.FavoriteStar,
                     Width = UIConstants.FAVORITES_COLUMN_WIDTH,
-                    MinimumWidth = UIConstants.FAVORITES_COLUMN_WIDTH
+                    MinimumWidth = UIConstants.FAVORITES_COLUMN_WIDTH,
+                    FillWeight = 1F,
+                    AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                    Resizable = DataGridViewTriState.False,
+                    SortMode = DataGridViewColumnSortMode.NotSortable
                 };
                 serverListView.Columns.Insert(0, favColumn);
             }
@@ -117,6 +129,7 @@ namespace TacticalOpsQuickJoin
             serverListView.CellDoubleClick += serverListView_CellDoubleClick!;
             serverListView.CellMouseEnter += serverListView_CellMouseEnter!;
             serverListView.CellMouseLeave += (s, e) => _mapPreviewService.CloseMapPreview();
+            serverListView.CellPainting += serverListView_CellPainting;
             serverListView.ColumnHeaderMouseClick += serverListView_ColumnHeaderMouseClick;
 
             _ = _mapService.LoadMapDataAsync();
@@ -132,16 +145,95 @@ namespace TacticalOpsQuickJoin
             ConfigureStatusLabels();
         }
 
+        private void ApplyModernChrome()
+        {
+            Font = UIConstants.Fonts.RegularFont;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MinimumSize = new Size(900, 680);
+            ClientSize = new Size(980, 700);
+            ShowIcon = true;
+            ApplyWindowIcon();
+
+            menuStrip1.Padding = new Padding(4, 2, 0, 2);
+            menuStrip1.AutoSize = false;
+            menuStrip1.Height = 24;
+            menuToolStripMenuItem.Text = "Menu";
+            configToolStripMenuItem.Text = "Config";
+            helpToolStripMenuItem.Text = "Help";
+
+            splitMainStatusBar.BorderStyle = BorderStyle.None;
+            splitMainStatusBar.SplitterWidth = 1;
+            splitMainStatusBar.Panel1.Padding = new Padding(10, 10, 10, 0);
+            splitMainStatusBar.Panel2.Padding = new Padding(10, 3, 10, 6);
+            splitMainStatusBar.Panel2MinSize = 32;
+            splitMainStatusBar.SplitterDistance = Math.Max(1, splitMainStatusBar.Height - 34);
+
+            splitServerSettingsList.BorderStyle = BorderStyle.None;
+            splitServerSettingsList.SplitterWidth = 10;
+            splitServerSettingsList.Panel1.Padding = new Padding(0, 0, 0, 8);
+            splitServerSettingsList.Panel2.Padding = new Padding(0);
+
+            splitPlayerServerList.BorderStyle = BorderStyle.None;
+            splitPlayerServerList.SplitterWidth = 10;
+            splitPlayerServerList.Panel1.Padding = new Padding(0);
+            splitPlayerServerList.Panel2.Padding = new Padding(0, 0, 0, 0);
+
+            split.BackColor = UIConstants.DarkTheme.GridColor;
+            split.Height = 1;
+
+            lblDownloadState.Dock = DockStyle.Fill;
+            lblDownloadState.TextAlign = ContentAlignment.MiddleLeft;
+            lblDownloadState.Font = UIConstants.Fonts.RegularFont;
+
+            foreach (var label in new[] { lblWaitingForResponse, lblNoResponse, lblNoPlayers })
+            {
+                label.Font = UIConstants.Fonts.RegularFont;
+                label.Location = new Point(10, UIConstants.HEADER_HEIGHT + 8);
+                label.AutoSize = false;
+                label.Size = new Size(260, 24);
+                label.TextAlign = ContentAlignment.MiddleLeft;
+                label.Padding = new Padding(6, 0, 6, 0);
+                label.BackColor = _themeManager?.GetPanelBackColor() ?? UIConstants.LightTheme.Surface;
+            }
+
+            btnJoinServer.Text = "JOIN SERVER";
+        }
+
+        private void ApplyWindowIcon()
+        {
+            try
+            {
+                var executableIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (executableIcon != null)
+                {
+                    Icon = executableIcon;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error loading window icon: {ex.Message}");
+            }
+        }
+
         private void ConfigureColumnWidths()
         {
             if (serverListView.Columns.Count >= 6)
             {
                 serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].Width = UIConstants.FAVORITES_COLUMN_WIDTH;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].MinimumWidth = UIConstants.FAVORITES_COLUMN_WIDTH;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].Resizable = DataGridViewTriState.False;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].SortMode = DataGridViewColumnSortMode.NotSortable;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].DefaultCellStyle.Padding = Padding.Empty;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+                serverListView.Columns[UIConstants.FAVORITES_COLUMN_INDEX].HeaderCell.Style.Padding = Padding.Empty;
                 serverListView.Columns[1].Width = 240;
                 serverListView.Columns[UIConstants.MAP_COLUMN_INDEX].Width = 130;
                 serverListView.Columns[UIConstants.PLAYERS_COLUMN_INDEX].Width = 100;
                 serverListView.Columns[UIConstants.PING_COLUMN_INDEX].Width = 50;
-                serverListView.Columns[UIConstants.VERSION_COLUMN_INDEX].Width = 60;
+                serverListView.Columns[UIConstants.VERSION_COLUMN_INDEX].Width = 72;
+                serverListView.Columns[UIConstants.VERSION_COLUMN_INDEX].MinimumWidth = 64;
 
                 var centerAlignedCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter };
                 serverListView.Columns[UIConstants.MAP_COLUMN_INDEX].DefaultCellStyle = centerAlignedCellStyle;
@@ -158,6 +250,18 @@ namespace TacticalOpsQuickJoin
             lblWaitingForResponse.Hide();
             if (_themeManager != null)
             {
+                BackColor = _themeManager.IsDarkMode ? UIConstants.DarkTheme.Background : UIConstants.LightTheme.Background;
+                splitMainStatusBar.Panel1.BackColor = BackColor;
+                splitMainStatusBar.Panel2.BackColor = BackColor;
+                splitServerSettingsList.Panel1.BackColor = BackColor;
+                splitServerSettingsList.Panel2.BackColor = BackColor;
+                splitPlayerServerList.Panel1.BackColor = _themeManager.GetPanelBackColor();
+                splitPlayerServerList.Panel2.BackColor = _themeManager.GetPanelBackColor();
+                split.BackColor = _themeManager.IsDarkMode ? UIConstants.DarkTheme.GridColor : UIConstants.LightTheme.GridColor;
+                foreach (var label in new[] { lblWaitingForResponse, lblNoResponse, lblNoPlayers })
+                {
+                    label.BackColor = _themeManager.GetPanelBackColor();
+                }
                 lblNoResponse.ForeColor = _themeManager.GetLabelColor("NoResponse");
                 lblNoPlayers.ForeColor = _themeManager.GetLabelColor("NoPlayers");
                 lblWaitingForResponse.ForeColor = _themeManager.GetLabelColor("WaitingForResponse");
@@ -175,6 +279,7 @@ namespace TacticalOpsQuickJoin
             _themeManager.ApplyToButton(btnJoinServer);
             if (Controls.Find("menuStrip1", true).FirstOrDefault() is MenuStrip menuStrip)
                 _themeManager.ApplyToMenuStrip(menuStrip);
+            ConfigureStatusLabels();
             _themeApplied = true;
         }
 
@@ -190,6 +295,29 @@ namespace TacticalOpsQuickJoin
             string? previewUrl = mapData != null && !string.IsNullOrEmpty(mapData.PreviewSmall) ? mapData.PreviewSmall : mapData?.Preview;
 
             _mapPreviewService.InitiateMapPreview(previewUrl, mapData?.Name ?? mapName, server.ServerName ?? "Unknown Server", mapName, Cursor.Position);
+        }
+
+        private void serverListView_CellPainting(object? sender, DataGridViewCellPaintingEventArgs e)
+        {
+            if (e.ColumnIndex != UIConstants.FAVORITES_COLUMN_INDEX || e.RowIndex < -1) return;
+            if (e.Graphics == null) return;
+
+            e.Paint(e.CellBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.Border);
+
+            string star = e.RowIndex == -1
+                ? UIConstants.FavoriteStar
+                : e.FormattedValue?.ToString() ?? string.Empty;
+            Color color = star == UIConstants.FavoriteStar ? Color.Gold : Color.FromArgb(135, 145, 137);
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                star,
+                _starFont ?? UIConstants.Fonts.StarFont,
+                e.CellBounds,
+                color,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+            e.Handled = true;
         }
 
         private void SortServerList()
@@ -210,8 +338,8 @@ namespace TacticalOpsQuickJoin
                 int colIndex = _sortedColumn!.Index;
                 if (colIndex == UIConstants.PLAYERS_COLUMN_INDEX)
                 {
-                    int p1 = Math.Max(0, s1.NumPlayers - s1.BotCount);
-                    int p2 = Math.Max(0, s2.NumPlayers - s2.BotCount);
+                    int p1 = s1.DisplayHumanPlayerCount;
+                    int p2 = s2.DisplayHumanPlayerCount;
                     result = p1.CompareTo(p2);
                     if (result == 0) result = s1.MaxPlayers.CompareTo(s2.MaxPlayers);
                 }
@@ -235,30 +363,48 @@ namespace TacticalOpsQuickJoin
         {
             if (_isRefreshing) return;
             _isRefreshing = true;
+            _autoRefreshTimer?.Stop();
+            int refreshId = Interlocked.Increment(ref _serverListRefreshId);
+            Interlocked.Increment(ref _selectionRequestId);
             try
             {
                 lblDownloadState.Text = "Contacting master servers...";
+                _mapPreviewService.CloseMapPreview();
+                playerListView.Rows.Clear();
+                lblNoPlayers.Hide();
+                lblNoResponse.Hide();
+                lblWaitingForResponse.Hide();
                 serverListView.Rows.Clear();
                 
                 await _serverListManager.RefreshServerListAsync(server =>
                 {
-                    Invoke(new Action(() => AddServerToGrid(server)));
+                    if (refreshId == _serverListRefreshId && !IsDisposed)
+                        Invoke(new Action(() => AddServerToGrid(server)));
                 });
+
+                if (refreshId != _serverListRefreshId) return;
                 
                 lblDownloadState.Text = $"Done. {serverListView.Rows.Count} servers online.";
                 if (serverListView.Rows.Count > 0) Invoke(() => { serverListView.Rows[0].Selected = true; serverListView_SelectionChanged(serverListView, EventArgs.Empty); });
             }
-            finally { _isRefreshing = false; }
+            finally
+            {
+                if (refreshId == _serverListRefreshId)
+                {
+                    _isRefreshing = false;
+                    _autoRefreshTimer?.Start();
+                }
+            }
         }
 
         private void AddServerToGrid(ServerData serverData)
         {
             var newRow = new DataGridViewRow();
             newRow.CreateCells(serverListView,
-                _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆",
-                serverData.Password ? $"🔒 {serverData.ServerName}" : serverData.ServerName,
+                GetFavoriteSymbol(serverData),
+                FormatServerName(serverData),
                 serverData.MapTitle,
-                serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}",
+                serverData.GetPlayerSummary(),
                 serverData.Ping, serverData.GameType);
             newRow.Tag = serverData.Id;
             bool isFavorite = _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}");
@@ -266,6 +412,7 @@ namespace TacticalOpsQuickJoin
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray; 
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Font = _starFont;
             newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            newRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Padding = Padding.Empty;
             var pingColor = PlayerListRenderer.GetPingColor(serverData.Ping);
             newRow.Cells[UIConstants.PING_COLUMN_INDEX].Style.BackColor = pingColor;
             newRow.Cells[UIConstants.PING_COLUMN_INDEX].Style.SelectionBackColor = pingColor;
@@ -277,13 +424,21 @@ namespace TacticalOpsQuickJoin
             }
         }
 
+        private string GetFavoriteSymbol(ServerData serverData) =>
+            _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}")
+                ? UIConstants.FavoriteStar
+                : UIConstants.FavoriteEmptyStar;
+
+        private static string? FormatServerName(ServerData serverData) =>
+            serverData.Password ? $"{Constants.ICON_LOCKED} {serverData.ServerName}" : serverData.ServerName;
+
         private void UpdateServerGridRow(DataGridViewRow row, ServerData serverData)
         {
             // Update the cells of the given row
-            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Value = _serverListManager.FavoriteServers.Contains($"{serverData.ServerIP}:{serverData.ServerPort}") ? "★" : "☆";
-            row.Cells[1].Value = serverData.Password ? $"🔒 {serverData.ServerName}" : serverData.ServerName;
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Value = GetFavoriteSymbol(serverData);
+            row.Cells[1].Value = FormatServerName(serverData);
             row.Cells[UIConstants.MAP_COLUMN_INDEX].Value = serverData.MapTitle;
-            row.Cells[UIConstants.PLAYERS_COLUMN_INDEX].Value = serverData.BotCount > 0 ? $"{Math.Max(0, serverData.NumPlayers - serverData.BotCount)} (+{serverData.BotCount} Bots) / {serverData.MaxPlayers}" : $"{serverData.NumPlayers} / {serverData.MaxPlayers}";
+            row.Cells[UIConstants.PLAYERS_COLUMN_INDEX].Value = serverData.GetPlayerSummary();
             row.Cells[UIConstants.PING_COLUMN_INDEX].Value = serverData.Ping;
             row.Cells[UIConstants.VERSION_COLUMN_INDEX].Value = serverData.GameType;
 
@@ -293,6 +448,7 @@ namespace TacticalOpsQuickJoin
             row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.SelectionForeColor = isFavorite ? Color.Gold : Color.Gray;
             row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Font = _starFont;
             row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            row.Cells[UIConstants.FAVORITES_COLUMN_INDEX].Style.Padding = Padding.Empty;
             var pingColor = PlayerListRenderer.GetPingColor(serverData.Ping);
             row.Cells[UIConstants.PING_COLUMN_INDEX].Style.BackColor = pingColor;
             row.Cells[UIConstants.PING_COLUMN_INDEX].Style.SelectionBackColor = pingColor;
@@ -301,24 +457,65 @@ namespace TacticalOpsQuickJoin
         private async void serverListView_SelectionChanged(object sender, EventArgs e)
         {
             if (serverListView.SelectedRows.Count == 0 || serverSettingsView?.Parent == null) return;
+            if (serverListView.SelectedRows[0].Tag is not int selectedServerId ||
+                !_serverListManager.ServerLookup.TryGetValue(selectedServerId, out var server))
+            {
+                return;
+            }
+
+            int requestId = Interlocked.Increment(ref _selectionRequestId);
+            int refreshId = _serverListRefreshId;
             serverSettingsView.Parent.Controls.OfType<FlowLayoutPanel>().ToList().ForEach(p => serverSettingsView.Parent.Controls.Remove(p));
             btnJoinServer.BringToFront();
             playerListView.Rows.Clear();
             lblNoPlayers.Hide();
             lblNoResponse.Hide();
             lblWaitingForResponse.Show();
+            lblWaitingForResponse.BringToFront();
             try
             {
-                if (serverListView.SelectedRows[0].Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
+                await _detailsSemaphore.WaitAsync();
+                try
                 {
+                    if (requestId != _selectionRequestId || refreshId != _serverListRefreshId) return;
+
                     server.ClearPlayerList();
                     await _serverProvider.GetServerDetailsAsync(server);
-                    UpdateStatusInfoUI(server);
-                    UpdateServerListRow(server);
+                }
+                finally
+                {
+                    _detailsSemaphore.Release();
+                }
+
+                if (requestId != _selectionRequestId ||
+                    refreshId != _serverListRefreshId ||
+                    serverListView.SelectedRows.Count == 0 ||
+                    serverListView.SelectedRows[0].Tag is not int currentServerId ||
+                    currentServerId != selectedServerId)
+                {
+                    return;
+                }
+
+                UpdateStatusInfoUI(server);
+                UpdateServerListRow(server);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error loading details: {ex.Message}");
+                if (requestId == _selectionRequestId)
+                {
+                    lblNoResponse.Show();
+                    lblNoResponse.BringToFront();
+                    lblWaitingForResponse.Hide();
                 }
             }
-            catch (Exception ex) { Debug.WriteLine($"Error loading details: {ex.Message}"); lblNoResponse.Show(); lblWaitingForResponse.Hide(); }
-            finally { lblWaitingForResponse.Hide(); }
+            finally
+            {
+                if (requestId == _selectionRequestId)
+                {
+                    lblWaitingForResponse.Hide();
+                }
+            }
         }
         
         private void UpdateStatusInfoUI(ServerData serverData)
@@ -336,57 +533,25 @@ namespace TacticalOpsQuickJoin
                 ["Explosion FF"] = serverData.GetProperty("explositionff") ?? "N/A"
             };
             if (serverSettingsView.Parent is not Control settingsContainer) return;
-            var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(5, 5, 5, btnJoinServer.Height + 5), BackColor = _themeManager?.GetPanelBackColor() ?? SystemColors.Control };
+            var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(14, 12, 14, btnJoinServer.Height + 12), BackColor = _themeManager?.GetPanelBackColor() ?? UIConstants.LightTheme.Surface };
             settingsContainer.Controls.Add(panel);
             panel.BringToFront();
-            using var monoFont = UIConstants.Fonts.MonospaceFont;
-            using var headerFont = new Font("Segoe UI", 10, FontStyle.Bold);
-            var labelColor = _themeManager?.GetPanelForeColor() ?? SystemColors.ControlText;
-            panel.Controls.Add(new Label { Text = "SERVER SETTINGS:", Font = headerFont, ForeColor = labelColor, Padding = new Padding(0, 0, 0, 8), AutoSize = true });
+            var labelColor = _themeManager?.GetPanelForeColor() ?? UIConstants.LightTheme.Foreground;
+            panel.Controls.Add(new Label { Text = "SERVER SETTINGS", Font = _settingsHeaderFont, ForeColor = labelColor, Padding = new Padding(0, 0, 0, 10), AutoSize = true });
             foreach (var (key, value) in settings)
-                panel.Controls.Add(new Label { Text = $"{key.PadRight(18)}: {value}", AutoSize = true, ForeColor = labelColor, Font = monoFont });
+                panel.Controls.Add(new Label { Text = $"{key.PadRight(18)} {value}", AutoSize = true, ForeColor = labelColor, Font = _settingsMonoFont, Padding = new Padding(0, 1, 0, 1) });
             
-            // Populate Player List
-            playerListView.Rows.Clear();
-            serverData.Players.Clear(); // Clear existing players before re-populating
-
-            int numPlayers = 0;
-            if (int.TryParse(serverData.GetProperty("numplayers"), out int parsedNumPlayers))
+            if (serverData.VisiblePlayerInfoCount == 0)
             {
-                numPlayers = parsedNumPlayers;
-            }
-
-            if (numPlayers == 0)
-            {
+                playerListView.Rows.Clear();
+                serverData.Players.Clear();
                 lblNoPlayers.Show();
+                lblNoPlayers.BringToFront();
             }
             else
             {
                 lblNoPlayers.Hide();
-                for (int i = 0; i < numPlayers; i++)
-                {
-                    string playerName = serverData.GetProperty("player_" + i.ToString());
-                    if (!string.IsNullOrEmpty(playerName))
-                    {
-                        int score = Convert.ToInt32(serverData.GetProperty("score_" + i.ToString()));
-                        int kills = Convert.ToInt32(serverData.GetProperty("frags_" + i.ToString()));
-                        int deaths = Convert.ToInt32(serverData.GetProperty("deaths_" + i.ToString()));
-                        int ping = Convert.ToInt32(serverData.GetProperty("ping_" + i.ToString()));
-                        int team = Convert.ToInt32(serverData.GetProperty("team_" + i.ToString()));
-
-                        var player = new Player { 
-                            Id = i, 
-                            Name = playerName, 
-                            Score = score, 
-                            Kills = kills, 
-                            Deaths = deaths, 
-                            Ping = ping, 
-                            Team = team 
-                        };
-                        serverData.Players.Add(player);
-                    }
-                }
-                PlayerListRenderer.RenderPlayerList(playerListView, serverData); // Render all players at once
+                PlayerListRenderer.RenderPlayerList(playerListView, serverData);
                 playerListView.Sort(playerListScoreColumn, ListSortDirection.Descending);
                 playerListView.Sort(playerListTeamColumn, ListSortDirection.Descending);
             }
@@ -456,7 +621,7 @@ namespace TacticalOpsQuickJoin
                     _serverListManager.ToggleFavorite(key);
                     var cell = serverListView.Rows[e.RowIndex].Cells[e.ColumnIndex];
                     bool isFav = _serverListManager.FavoriteServers.Contains(key);
-                    cell.Value = isFav ? "★" : "☆";
+                    cell.Value = isFav ? UIConstants.FavoriteStar : UIConstants.FavoriteEmptyStar;
                     cell.Style.ForeColor = isFav ? Color.Yellow : Color.Gray;
                     SortServerList();
                 }
@@ -494,6 +659,9 @@ namespace TacticalOpsQuickJoin
             _mapPreviewService.CloseMapPreview();
             _themeManager?.Dispose();
             _starFont?.Dispose();
+            _settingsHeaderFont?.Dispose();
+            _settingsMonoFont?.Dispose();
+            _detailsSemaphore.Dispose();
             _httpClient?.Dispose();
         }
 
@@ -537,7 +705,7 @@ namespace TacticalOpsQuickJoin
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
         {
             if (serverListView.CurrentRow?.Tag is int index && _serverListManager.ServerLookup.TryGetValue(index, out var server))
-                addToFavoritesToolStripMenuItem.Text = _serverListManager.FavoriteServers.Contains($"{server.ServerIP}:{server.ServerPort}") ? "Von Favoriten entfernen" : "Zu Favoriten hinzufügen";
+                addToFavoritesToolStripMenuItem.Text = _serverListManager.FavoriteServers.Contains($"{server.ServerIP}:{server.ServerPort}") ? "Von Favoriten entfernen" : "Zu Favoriten hinzuf\u00fcgen";
         }
 
         private void addToFavoritesToolStripMenuItem_Click(object sender, EventArgs e)
@@ -548,7 +716,7 @@ namespace TacticalOpsQuickJoin
                 _serverListManager.ToggleFavorite(key);
                 var cell = serverListView.CurrentRow.Cells[UIConstants.FAVORITES_COLUMN_INDEX];
                 bool isFav = _serverListManager.FavoriteServers.Contains(key);
-                cell.Value = isFav ? "★" : "☆";
+                cell.Value = isFav ? UIConstants.FavoriteStar : UIConstants.FavoriteEmptyStar;
                 cell.Style.ForeColor = isFav ? Color.Yellow : Color.Gray;
                 SortServerList();
             }
@@ -561,11 +729,33 @@ namespace TacticalOpsQuickJoin
 
         private async Task RefreshSingleServerAsync(ServerData serverData)
         {
+            int refreshId = _serverListRefreshId;
+            int? selectedServerId = serverListView.CurrentRow?.Tag is int id ? id : null;
             try 
-            { 
-                await _serverProvider.GetServerDetailsAsync(serverData);
-                UpdateStatusInfoUI(serverData);
+            {
+                await _detailsSemaphore.WaitAsync();
+                try
+                {
+                    if (refreshId != _serverListRefreshId) return;
+
+                    serverData.ClearPlayerList();
+                    await _serverProvider.RefreshServerAsync(serverData);
+                }
+                finally
+                {
+                    _detailsSemaphore.Release();
+                }
+
+                if (refreshId != _serverListRefreshId) return;
+
                 UpdateServerListRow(serverData);
+                if (selectedServerId == serverData.Id &&
+                    serverListView.CurrentRow?.Tag is int currentServerId &&
+                    currentServerId == serverData.Id)
+                {
+                    Interlocked.Increment(ref _selectionRequestId);
+                    UpdateStatusInfoUI(serverData);
+                }
             }
             catch (Exception ex) { Debug.WriteLine($"Error refreshing single server: {ex.Message}"); }
         }

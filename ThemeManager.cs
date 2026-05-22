@@ -29,8 +29,8 @@ public sealed class ThemeManager : IDisposable
         }
         else
         {
-            _form.BackColor = SystemColors.Control;
-            _form.ForeColor = SystemColors.ControlText;
+            _form.BackColor = UIConstants.LightTheme.Background;
+            _form.ForeColor = UIConstants.LightTheme.Foreground;
         }
     }
 
@@ -43,36 +43,34 @@ public sealed class ThemeManager : IDisposable
         grid.EnableHeadersVisualStyles = false;
         grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
         grid.ColumnHeadersHeight = UIConstants.HEADER_HEIGHT;
+        grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
         grid.RowTemplate.Height = UIConstants.ROW_HEIGHT;
         grid.RowHeadersVisible = false;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        grid.BackgroundColor = IsDarkMode ? UIConstants.DarkTheme.Surface : UIConstants.LightTheme.Surface;
+        grid.GridColor = IsDarkMode ? UIConstants.DarkTheme.GridColor : UIConstants.LightTheme.GridColor;
+        grid.DefaultCellStyle.Padding = new Padding(8, 0, 8, 0);
+        grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
+        grid.AdvancedCellBorderStyle.Left = DataGridViewAdvancedCellBorderStyle.None;
+        grid.AdvancedCellBorderStyle.Right = DataGridViewAdvancedCellBorderStyle.None;
+        grid.AdvancedColumnHeadersBorderStyle.Left = DataGridViewAdvancedCellBorderStyle.None;
+        grid.AdvancedColumnHeadersBorderStyle.Right = DataGridViewAdvancedCellBorderStyle.None;
 
         var headerFont = CreateManagedFont(UIConstants.Fonts.HeaderFont);
+        var starHeaderFont = CreateManagedFont(UIConstants.Fonts.StarFont);
         var regularFont = CreateManagedFont(UIConstants.Fonts.RegularFont);
 
         if (IsDarkMode)
         {
-            grid.BackgroundColor = UIConstants.DarkTheme.Background;
-            grid.GridColor = UIConstants.DarkTheme.GridColor;
-            
             grid.ColumnHeadersDefaultCellStyle.BackColor = UIConstants.DarkTheme.HeaderBackground;
             grid.ColumnHeadersDefaultCellStyle.ForeColor = UIConstants.DarkTheme.Foreground;
             grid.ColumnHeadersDefaultCellStyle.Font = headerFont;
-            // grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Removed global alignment
             grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = UIConstants.DarkTheme.HeaderBackground;
             grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = UIConstants.DarkTheme.Foreground;
             
-            // Explicitly set header alignment for each column
-            foreach (DataGridViewColumn column in grid.Columns)
-            {
-                if (column.HeaderCell.Style == null)
-                {
-                    column.HeaderCell.Style = new DataGridViewCellStyle();
-                }
-                column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            }
+            ApplyHeaderStyles(grid, headerFont, starHeaderFont);
             
-            grid.DefaultCellStyle.BackColor = UIConstants.DarkTheme.Background;
+            grid.DefaultCellStyle.BackColor = UIConstants.DarkTheme.Surface;
             grid.DefaultCellStyle.ForeColor = UIConstants.DarkTheme.Foreground;
             grid.DefaultCellStyle.Font = regularFont;
             grid.DefaultCellStyle.SelectionBackColor = UIConstants.DarkTheme.AccentColor;
@@ -83,34 +81,22 @@ public sealed class ThemeManager : IDisposable
         }
         else
         {
-            grid.BackgroundColor = SystemColors.Window;
-            grid.GridColor = SystemColors.ControlLight;
-            
-            grid.ColumnHeadersDefaultCellStyle.BackColor = SystemColors.Control;
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = UIConstants.LightTheme.HeaderBackground;
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = UIConstants.LightTheme.Foreground;
             grid.ColumnHeadersDefaultCellStyle.Font = headerFont;
-            // grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter; // Removed global alignment
-            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = SystemColors.Control;
-            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = SystemColors.ControlText;
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = UIConstants.LightTheme.HeaderBackground;
+            grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = UIConstants.LightTheme.Foreground;
 
-            // Explicitly set header alignment for each column
-            foreach (DataGridViewColumn column in grid.Columns)
-            {
-                if (column.HeaderCell.Style == null)
-                {
-                    column.HeaderCell.Style = new DataGridViewCellStyle();
-                }
-                column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            }
+            ApplyHeaderStyles(grid, headerFont, starHeaderFont);
             
-            grid.DefaultCellStyle.BackColor = SystemColors.Window;
-            grid.DefaultCellStyle.ForeColor = SystemColors.WindowText;
+            grid.DefaultCellStyle.BackColor = UIConstants.LightTheme.Surface;
+            grid.DefaultCellStyle.ForeColor = UIConstants.LightTheme.Foreground;
             grid.DefaultCellStyle.Font = regularFont;
-            grid.DefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
-            grid.DefaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
+            grid.DefaultCellStyle.SelectionBackColor = UIConstants.LightTheme.AccentColor;
+            grid.DefaultCellStyle.SelectionForeColor = Color.White;
             
             grid.AlternatingRowsDefaultCellStyle.BackColor = UIConstants.LightTheme.AlternatingRow;
-            grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
+            grid.AlternatingRowsDefaultCellStyle.SelectionBackColor = UIConstants.LightTheme.AccentColor;
         }
     }
 
@@ -122,12 +108,16 @@ public sealed class ThemeManager : IDisposable
         
         button.BackColor = UIConstants.CommonColors.JoinButtonBackground;
         button.ForeColor = UIConstants.CommonColors.JoinButtonForeground;
-        button.FlatStyle = FlatStyle.Standard;
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = IsDarkMode ? UIConstants.DarkTheme.AccentHover : UIConstants.LightTheme.AccentHover;
+        button.FlatAppearance.MouseDownBackColor = IsDarkMode ? UIConstants.DarkTheme.AccentColor : UIConstants.LightTheme.AccentColor;
         button.Font = buttonFont;
         button.UseVisualStyleBackColor = false;
         button.TextAlign = ContentAlignment.MiddleCenter;
         button.Padding = new Padding(0);
         button.Height = UIConstants.JOIN_BUTTON_HEIGHT;
+        button.Cursor = Cursors.Hand;
     }
 
     public void ApplyToMenuStrip(MenuStrip menuStrip)
@@ -143,24 +133,31 @@ public sealed class ThemeManager : IDisposable
         }
         else
         {
-            menuStrip.Renderer = new ToolStripProfessionalRenderer();
-            menuStrip.BackColor = SystemColors.MenuBar;
-            menuStrip.ForeColor = SystemColors.MenuText;
-            SetMenuColors(menuStrip.Items, SystemColors.MenuText);
+            menuStrip.Renderer = new ToolStripProfessionalRenderer(new LightMenuColorTable());
+            menuStrip.BackColor = UIConstants.LightTheme.Background;
+            menuStrip.ForeColor = UIConstants.LightTheme.Foreground;
+            SetMenuColors(menuStrip.Items, UIConstants.LightTheme.Foreground);
+        }
+
+        menuStrip.Font = CreateManagedFont(UIConstants.Fonts.MenuFont);
+        foreach (ToolStripMenuItem item in menuStrip.Items)
+        {
+            item.Padding = new Padding(2, 0, 2, 0);
+            item.Margin = Padding.Empty;
         }
     }
 
     public Color GetLabelColor(string labelType) => labelType switch
     {
-        "NoResponse" => IsDarkMode ? Color.LightCoral : Color.Red,
-        "NoPlayers" => IsDarkMode ? Color.WhiteSmoke : SystemColors.ControlText,
-        "WaitingForResponse" => IsDarkMode ? Color.LightSkyBlue : Color.Blue,
-        "DownloadState" => IsDarkMode ? Color.WhiteSmoke : SystemColors.ControlText,
-        _ => IsDarkMode ? Color.WhiteSmoke : SystemColors.ControlText
+        "NoResponse" => IsDarkMode ? Color.FromArgb(244, 122, 112) : Color.FromArgb(176, 47, 47),
+        "NoPlayers" => IsDarkMode ? UIConstants.DarkTheme.MutedForeground : UIConstants.LightTheme.MutedForeground,
+        "WaitingForResponse" => IsDarkMode ? Color.FromArgb(134, 190, 160) : UIConstants.LightTheme.AccentColor,
+        "DownloadState" => IsDarkMode ? UIConstants.DarkTheme.MutedForeground : UIConstants.LightTheme.MutedForeground,
+        _ => IsDarkMode ? UIConstants.DarkTheme.Foreground : UIConstants.LightTheme.Foreground
     };
 
-    public Color GetPanelBackColor() => IsDarkMode ? UIConstants.DarkTheme.Background : SystemColors.Control;
-    public Color GetPanelForeColor() => IsDarkMode ? UIConstants.DarkTheme.Foreground : SystemColors.ControlText;
+    public Color GetPanelBackColor() => IsDarkMode ? UIConstants.DarkTheme.Surface : UIConstants.LightTheme.Surface;
+    public Color GetPanelForeColor() => IsDarkMode ? UIConstants.DarkTheme.Foreground : UIConstants.LightTheme.Foreground;
 
     private void SetMenuColors(ToolStripItemCollection items, Color color)
     {
@@ -169,6 +166,21 @@ public sealed class ThemeManager : IDisposable
             item.ForeColor = color;
             if (item is ToolStripMenuItem dropDownItem)
                 SetMenuColors(dropDownItem.DropDownItems, color);
+        }
+    }
+
+    private static void ApplyHeaderStyles(DataGridView grid, Font headerFont, Font starHeaderFont)
+    {
+        foreach (DataGridViewColumn column in grid.Columns)
+        {
+            column.HeaderCell.Style ??= new DataGridViewCellStyle();
+            column.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            column.HeaderCell.Style.Font = column.Name == "FavColumn"
+                ? starHeaderFont
+                : headerFont;
+            column.HeaderCell.Style.Padding = column.Name == "FavColumn"
+                ? Padding.Empty
+                : new Padding(6, 0, 6, 0);
         }
     }
 
@@ -207,4 +219,20 @@ public sealed class DarkMenuColorTable : ProfessionalColorTable
     public override Color MenuBorder => UIConstants.DarkTheme.MenuBorder;
     public override Color MenuItemBorder => Color.Transparent;
     public override Color ToolStripBorder => UIConstants.DarkTheme.MenuBorder;
+}
+
+public sealed class LightMenuColorTable : ProfessionalColorTable
+{
+    public override Color ToolStripDropDownBackground => UIConstants.LightTheme.Surface;
+    public override Color MenuItemSelected => UIConstants.LightTheme.MenuSelected;
+    public override Color MenuItemSelectedGradientBegin => UIConstants.LightTheme.MenuSelected;
+    public override Color MenuItemSelectedGradientEnd => UIConstants.LightTheme.MenuSelected;
+    public override Color MenuItemPressedGradientBegin => UIConstants.LightTheme.MenuPressed;
+    public override Color MenuItemPressedGradientEnd => UIConstants.LightTheme.MenuPressed;
+    public override Color ImageMarginGradientBegin => UIConstants.LightTheme.Surface;
+    public override Color ImageMarginGradientMiddle => UIConstants.LightTheme.Surface;
+    public override Color ImageMarginGradientEnd => UIConstants.LightTheme.Surface;
+    public override Color MenuBorder => UIConstants.LightTheme.GridColor;
+    public override Color MenuItemBorder => Color.Transparent;
+    public override Color ToolStripBorder => UIConstants.LightTheme.GridColor;
 }

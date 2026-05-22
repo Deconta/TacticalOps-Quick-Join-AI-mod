@@ -54,28 +54,18 @@ namespace TacticalOpsQuickJoin
                 var dataStatus = Encoding.UTF8.GetBytes(@"\status\");
                 await udp.SendAsync(dataStatus, dataStatus.Length);
                 
-                var (statusResponseData, statusLogBytes) = await ReceiveDataUntilTimeout(udp);
+                var statusResponseData = await ReceiveDataUntilTimeout(udp);
                 serverData.UpdateInfo(statusResponseData);
 
-                // If not all info received or players info needed, send players request
-                // This mimics the original project's logic of sending players after status data might have been received
-                if (!statusResponseData.Contains(@"\final\") && !string.IsNullOrEmpty(statusResponseData))
+                // Some servers mark the status response as final even though player data is
+                // returned more reliably through the dedicated players query.
+                if (!string.IsNullOrEmpty(statusResponseData))
                 {
                     var dataPlayers = Encoding.UTF8.GetBytes(@"\players\");
                     await udp.SendAsync(dataPlayers, dataPlayers.Length);
-                    var (playersResponseData, playersLogBytes) = await ReceiveDataUntilTimeout(udp);
+                    var playersResponseData = await ReceiveDataUntilTimeout(udp);
                     serverData.UpdateInfo(playersResponseData);
-
-                    // Append player log bytes to status log bytes for a combined view
-                    statusLogBytes = statusLogBytes.Concat(playersLogBytes).ToArray();
                 }
-
-                // Log raw bytes for debugging purposes
-                try
-                {
-                    File.WriteAllBytes("server_response.log", statusLogBytes);
-                }
-                catch { /* Ignore logging errors */ }
             }
             catch (Exception ex)
             {
@@ -83,10 +73,21 @@ namespace TacticalOpsQuickJoin
             }
         }
 
-        private async Task<(string, byte[])> ReceiveDataUntilTimeout(UdpClient udp)
+        public async Task RefreshServerAsync(ServerData serverData)
+        {
+            var refreshedInfo = await QueryServerInfoAsync(serverData.Id, $"{serverData.ServerIP}:{serverData.ServerPort}");
+            if (refreshedInfo != null)
+            {
+                serverData.Ping = refreshedInfo.Ping;
+                serverData.SetInfo(refreshedInfo.RawInfo);
+            }
+
+            await GetServerDetailsAsync(serverData);
+        }
+
+        private async Task<string> ReceiveDataUntilTimeout(UdpClient udp)
         {
             var allData = new StringBuilder();
-            var allBytes = new List<byte>();
             
             // Give the server up to 3 seconds to respond in total for this part
             var overallTimeoutCts = new CancellationTokenSource(3000); 
@@ -102,7 +103,6 @@ namespace TacticalOpsQuickJoin
                     if (completedTask == receiveTask.AsTask())
                     {
                         var result = await receiveTask;
-                        allBytes.AddRange(result.Buffer);
                         string responsePart = Encoding.UTF8.GetString(result.Buffer);
                         allData.Append(responsePart);
                     }
@@ -123,7 +123,7 @@ namespace TacticalOpsQuickJoin
                     break;
                 }
             }
-            return (allData.ToString(), allBytes.ToArray());
+            return allData.ToString();
         }
 
         private async Task<ServerData?> QueryServerInfoAsync(int id, string ipStr)

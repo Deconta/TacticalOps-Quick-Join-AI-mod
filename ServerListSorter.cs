@@ -47,7 +47,7 @@ namespace TacticalOpsQuickJoin
             }
             if (colIndex == UIConstants.PLAYERS_COLUMN_INDEX)
             {
-                return Math.Max(0, server.NumPlayers - server.BotCount);
+                return server.DisplayHumanPlayerCount;
             }
             // Default to string comparison from the cell
             return row.Cells[colIndex].Value?.ToString() ?? "";

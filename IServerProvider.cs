@@ -8,5 +8,6 @@ namespace TacticalOpsQuickJoin
     {
         Task GetServerListAsync(Action<ServerData> onServerFound);
         Task GetServerDetailsAsync(ServerData serverData);
+        Task RefreshServerAsync(ServerData serverData);
     }
 }

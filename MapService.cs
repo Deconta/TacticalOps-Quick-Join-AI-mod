@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace TacticalOpsQuickJoin
@@ -33,14 +34,21 @@ namespace TacticalOpsQuickJoin
             try
             {
                 string jsonString;
-                if (File.Exists(localJsonPath))
+                if (File.Exists(localJsonPath) && DateTime.UtcNow - File.GetLastWriteTimeUtc(localJsonPath) < TimeSpan.FromDays(1))
                 {
                     jsonString = await File.ReadAllTextAsync(localJsonPath);
                 }
                 else
                 {
-                    jsonString = await _httpClient.GetStringAsync(Constants.MAP_JSON_URL);
-                    await File.WriteAllTextAsync(localJsonPath, jsonString);
+                    try
+                    {
+                        jsonString = await _httpClient.GetStringAsync(Constants.MAP_JSON_URL);
+                        await File.WriteAllTextAsync(localJsonPath, jsonString);
+                    }
+                    catch when (File.Exists(localJsonPath))
+                    {
+                        jsonString = await File.ReadAllTextAsync(localJsonPath);
+                    }
                 }
                 
                 _mapList = JsonSerializer.Deserialize<List<MapData>>(jsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
@@ -78,7 +86,9 @@ namespace TacticalOpsQuickJoin
                 { "terrormansion", "TO-TerrorMansion" },
                 { "cia", "TO-CIA" },
                 { "glasgowkiss", "TO-GlasgowKiss" },
-                { "avalanche", "TO-Avalanche" }
+                { "avalanche", "TO-Avalanche" },
+                { "2acoldday", "TO-2-ColdV32" },
+                { "acoldday", "TO-2-ColdV32" }
             };
 
             if (priorityMappings.TryGetValue(normalized, out var priorityName))
@@ -86,15 +96,7 @@ namespace TacticalOpsQuickJoin
                 var match = _mapList.FirstOrDefault(m => m.Name != null && m.Name.Equals(priorityName, StringComparison.OrdinalIgnoreCase));
                 if (match != null) return match;
 
-                // Try without TO- prefix
-                var nameWithoutPrefix = priorityName.StartsWith("TO-") ? priorityName.Substring(3) : priorityName;
-                match = _mapList.FirstOrDefault(m => m.Name != null && m.Name.EndsWith(nameWithoutPrefix, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
-
-                // Try partial match with just the name part
-                var namePart = priorityName.Replace("TO-", "").Replace("-", "");
-                match = _mapList.FirstOrDefault(m => m.Name != null && m.Name.Replace("-", "").Replace("_", "").Contains(namePart, StringComparison.OrdinalIgnoreCase));
-                if (match != null) return match;
+                return CreateMirrorFallback(priorityName);
             }
 
             // Direct lookup - normalize both sides
@@ -158,7 +160,36 @@ namespace TacticalOpsQuickJoin
                 }
             }
 
-            return bestScore > 0 ? bestMatch : null;
+            return bestScore > 0 ? bestMatch : CreateMirrorFallback(decodedName);
+        }
+
+        private static MapData? CreateMirrorFallback(string mapName)
+        {
+            string fileBaseName = BuildMirrorFileBaseName(mapName);
+            if (string.IsNullOrEmpty(fileBaseName)) return null;
+
+            return new MapData
+            {
+                Name = fileBaseName,
+                PreviewSmall = $"{Constants.MAP_SCREENSHOT_SMALL_BASE_URL}{Uri.EscapeDataString(fileBaseName)}.jpg",
+                Preview = $"{Constants.MAP_SCREENSHOT_PREVIEW_BASE_URL}{Uri.EscapeDataString(fileBaseName)}.jpg",
+                PreviewBig = $"{Constants.MAP_SCREENSHOT_BIG_BASE_URL}{Uri.EscapeDataString(fileBaseName)}.png"
+            };
+        }
+
+        private static string BuildMirrorFileBaseName(string mapName)
+        {
+            if (string.IsNullOrWhiteSpace(mapName)) return string.Empty;
+
+            string cleaned = System.Net.WebUtility.HtmlDecode(mapName).Trim('\'', '"').Trim();
+            cleaned = Regex.Replace(cleaned, @"\s+", "-");
+            cleaned = Regex.Replace(cleaned, @"[^A-Za-z0-9_\-\[\]\(\)]", "");
+            if (string.IsNullOrEmpty(cleaned)) return string.Empty;
+
+            string[] knownPrefixes = { "TO-", "TOUT-", "CTF-", "DM-", "AS-" };
+            return knownPrefixes.Any(prefix => cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                ? cleaned
+                : $"TO-{cleaned}";
         }
 
         private int CountCommonSubstring(string s1, string s2)
@@ -216,7 +247,7 @@ namespace TacticalOpsQuickJoin
 
             name = name.Replace("'s ", "").Replace("'s", "");
 
-            var prefixes = new[] { "TO-", "CTF-", "DM-", "AS-", "=FoE=", "-FoE-", "@8-", "-2-", "-X-", "-x-", "2W-", "SWAT-" };
+            var prefixes = new[] { "TO-", "CTF-", "DM-", "AS-", "=FoE=", "-FoE-", "@8-", "-X-", "-x-", "2W-", "SWAT-" };
             foreach (var prefix in prefixes)
             {
                 if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))

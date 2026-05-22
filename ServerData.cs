@@ -12,6 +12,7 @@ namespace TacticalOpsQuickJoin {
         public int NumPlayers { get; private set; } = 0;
         public int MaxPlayers { get; private set; } = 0;
         public int BotCount { get; private set; } = 0;
+        public int HiddenFakePlayerCount { get; private set; } = 0;
         public bool IsTO220 { get; private set; }
         public bool IsTO340 { get; private set; }
         public bool IsTO350 { get; private set; }
@@ -31,8 +32,18 @@ namespace TacticalOpsQuickJoin {
         public string? ExplosionFF { get; set; } = string.Empty;
 
         public List<Player> Players { get; private set; } = new List<Player>();
+        public string RawInfo { get; private set; } = string.Empty;
 
         private Dictionary<string, string> serverInfo;
+        private static readonly string[] PlayerInfoPrefixes =
+        {
+            "player_",
+            "score_",
+            "frags_",
+            "deaths_",
+            "ping_",
+            "team_"
+        };
 
         public ServerData(int id, string serverAddress) {
             Id = id;
@@ -44,6 +55,7 @@ namespace TacticalOpsQuickJoin {
         }
 
         public void SetInfo(string data) {
+            RawInfo = data;
             ParseData(data);
             UpdateProperties();
         }
@@ -88,8 +100,9 @@ namespace TacticalOpsQuickJoin {
             
 
 
-                        if (serverInfo.TryGetValue("maxplayers", out string? mpVal) && int.TryParse(mpVal, out int mp)) MaxPlayers = mp;
+            if (serverInfo.TryGetValue("maxplayers", out string? mpVal) && int.TryParse(mpVal, out int mp)) MaxPlayers = mp;
             if (serverInfo.TryGetValue("numplayers", out string? npVal) && int.TryParse(npVal, out int np)) NumPlayers = np;
+            HiddenFakePlayerCount = IsKnownFakePlayerServer ? NumPlayers : 0;
         }
 
         private int CountActualPlayers()
@@ -109,37 +122,30 @@ namespace TacticalOpsQuickJoin {
         {
             if (string.IsNullOrEmpty(data)) return false;
 
-            string[] dataElements = data.Split(new char[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] dataElements = data.Split('\\');
             bool containsFinal = false;
 
-            // Start from 0 for key, 1 for value
-            for (int i = 0; i < dataElements.Length - 1; i = i + 2)
+            for (int i = 0; i < dataElements.Length;)
             {
-                string tag = dataElements[i];
-                string content = dataElements[i + 1];
+                string tag = dataElements[i++];
+                if (string.IsNullOrEmpty(tag)) continue;
 
                 if (tag.Equals("final", StringComparison.OrdinalIgnoreCase))
                 {
                     containsFinal = true;
-                    // In the original code, it would not store "final" as a key
-                    // but continue parsing other elements if they exist.
-                    // However, we can break here as "final" should be the last tag.
-                    break;
+                    continue;
                 }
                 if (tag.Equals("queryid", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Skip queryid and its value
+                    if (i < dataElements.Length) i++;
                     continue;
                 }
+
+                if (i >= dataElements.Length) break;
+                string content = dataElements[i++];
                 serverInfo[tag] = content;
             }
 
-            // Check if "final" is the very last element in the array
-            if (dataElements.Length > 0 && dataElements[dataElements.Length - 1].Equals("final", StringComparison.OrdinalIgnoreCase))
-            {
-                containsFinal = true;
-            }
-            
             return containsFinal;
         }
 
@@ -147,7 +153,72 @@ namespace TacticalOpsQuickJoin {
             Players.Clear();
             BotCount = 0;
             NumPlayers = 0;
+            HiddenFakePlayerCount = 0;
+            foreach (var key in serverInfo.Keys.Where(IsPlayerInfoKey).ToList())
+            {
+                serverInfo.Remove(key);
+            }
         }
+
+        public int PlayerInfoCount => CountActualPlayers();
+        public int VisiblePlayerInfoCount => GetVisiblePlayers().Count();
+        public int DisplayHumanPlayerCount => Math.Max(0, NumPlayers - BotCount - HiddenFakePlayerCount);
+
+        public bool IsKnownFakePlayerServer =>
+            (ServerName ?? string.Empty).Contains("EL DORADO TACTICAL OPS", StringComparison.OrdinalIgnoreCase);
+
+        public string GetPlayerSummary()
+        {
+            if (BotCount > 0)
+                return $"{DisplayHumanPlayerCount} (+{BotCount} Bots) / {MaxPlayers}";
+
+            return $"{DisplayHumanPlayerCount} / {MaxPlayers}";
+        }
+
+        public IEnumerable<Player> GetVisiblePlayers()
+        {
+            for (int i = 0; i < 64; i++)
+            {
+                var player = GetPlayer(i);
+                if (player != null && !ShouldHidePlayer(player))
+                    yield return player;
+            }
+        }
+
+        private Player? GetPlayer(int index)
+        {
+            string playerName = GetProperty("player_" + index);
+            if (string.IsNullOrEmpty(playerName)) return null;
+
+            return new Player
+            {
+                Id = index,
+                Name = playerName,
+                Score = ParsePlayerInt("score_", index),
+                Kills = ParsePlayerInt("frags_", index),
+                Deaths = ParsePlayerInt("deaths_", index),
+                Ping = ParsePlayerInt("ping_", index, 999),
+                Team = ParsePlayerInt("team_", index)
+            };
+        }
+
+        private int ParsePlayerInt(string prefix, int index, int defaultValue = 0) =>
+            int.TryParse(GetProperty(prefix + index), out int value) ? value : defaultValue;
+
+        private bool ShouldHidePlayer(Player player)
+        {
+            if (IsKnownFakePlayerServer)
+                return true;
+
+            if (!int.TryParse(MinPlayers, out int minPlayers) || minPlayers <= 0)
+                return false;
+
+            bool looksLikeMinPlayersFill = PlayerInfoCount >= minPlayers && NumPlayers < PlayerInfoCount;
+            return looksLikeMinPlayersFill && player.Ping >= UIConstants.PING_TIMEOUT;
+        }
+
+        private static bool IsPlayerInfoKey(string key) =>
+            PlayerInfoPrefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
         public string GetProperty(string name) {
             string? value = string.Empty;

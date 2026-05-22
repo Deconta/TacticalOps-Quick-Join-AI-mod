@@ -10,41 +10,19 @@ public static class PlayerListRenderer
         playerListView.Rows.Clear();
         serverData.Players.Clear(); // Clear existing players before re-populating
 
-        // Iterate up to MaxPlayers (or a reasonable max like 64)
-        // to find all players and spectators, as the original project did not rely on numplayers directly
-        for (int i = 0; i < 64; i++) // Original code used 64 as max players to iterate
+        foreach (var player in serverData.GetVisiblePlayers())
         {
-            string playerName = serverData.GetProperty("player_" + i.ToString());
-            
-            if (!string.IsNullOrEmpty(playerName))
-            {
-                int score = Convert.ToInt32(serverData.GetProperty("score_" + i.ToString()));
-                int kills = Convert.ToInt32(serverData.GetProperty("frags_" + i.ToString()));
-                int deaths = Convert.ToInt32(serverData.GetProperty("deaths_" + i.ToString()));
-                int ping = Convert.ToInt32(serverData.GetProperty("ping_" + i.ToString()));
-                int team = Convert.ToInt32(serverData.GetProperty("team_" + i.ToString()));
+            serverData.Players.Add(player);
 
-                var player = new Player { 
-                    Id = i, 
-                    Name = playerName, 
-                    Score = score, 
-                    Kills = kills, 
-                    Deaths = deaths, 
-                    Ping = ping, 
-                    Team = team 
-                };
-                serverData.Players.Add(player);
+            bool isBot = player.Ping == 0;
+            string displayName = FormatPlayerName(player.Name, isBot);
 
-                bool isBot = player.Ping == 0;
-                string displayName = FormatPlayerName(player.Name, isBot);
-                
-                var row = new DataGridViewRow();
-                row.CreateCells(playerListView, displayName, player.Score, player.Kills, player.Deaths, player.Ping, player.Team);
-                
-                ApplyPlayerRowStyle(row, player.Team, isBot);
-                
-                playerListView.Rows.Add(row);
-            }
+            var row = new DataGridViewRow();
+            row.CreateCells(playerListView, displayName, player.Score, player.Kills, player.Deaths, player.Ping, player.Team);
+
+            ApplyPlayerRowStyle(row, player.Team, isBot);
+
+            playerListView.Rows.Add(row);
         }
     }
 

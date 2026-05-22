@@ -703,7 +703,5 @@
         private System.Windows.Forms.ToolStripMenuItem addToFavoritesToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem refreshServerToolStripMenuItem;
         private System.Windows.Forms.ToolStripSeparator contextMenuSeparator;
-        private System.Windows.Forms.ToolStripMenuItem ignoreServerToolStripMenuItem;
     }
 }
-
